@@ -20,6 +20,40 @@ struct Theme {
         static let secondaryBackground = Color(.systemGray6)
         static let cardBackground = Color(.systemBackground)
         static let borderColor = Color(.systemGray4)
+        
+        // MARK: - Gradient Colors
+        static let gradientTop = Color(red: 1.0, green: 0.95, blue: 0.75)      // Light cream/yellow
+        static let gradientMiddle = Color(red: 1.0, green: 0.85, blue: 0.4)     // Golden yellow
+        static let gradientBottom = Color(red: 0.9, green: 0.3, blue: 0.9)      // Vibrant pink/magenta
+        
+        // MARK: - UI on Gradient
+        static let onGradientPrimary = Color.white
+        static let onGradientSecondary = Color.white.opacity(0.8)
+        static let onGradientBackground = Color.white.opacity(0.95)
+        static let onGradientCard = Color.white.opacity(0.9)
+        static let onGradientBorder = Color.white.opacity(0.3)
+    }
+    
+    // MARK: - Gradients
+    struct Gradients {
+        static let mainBackground = LinearGradient(
+            gradient: Gradient(colors: [
+                Colors.gradientTop,
+                Colors.gradientMiddle,
+                Colors.gradientBottom
+            ]),
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        
+        static let cardOverlay = LinearGradient(
+            gradient: Gradient(colors: [
+                Color.white.opacity(0.95),
+                Color.white.opacity(0.85)
+            ]),
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
     
     // MARK: - Typography
@@ -45,10 +79,12 @@ struct Theme {
     
     // MARK: - Layout
     struct Layout {
-        static let cornerRadius: CGFloat = 12
+        static let cornerRadius: CGFloat = 16
+        static let cardCornerRadius: CGFloat = 20
         static let borderWidth: CGFloat = 1
-        static let shadowRadius: CGFloat = 8
-        static let shadowOffset = CGSize(width: 0, height: 2)
-        static let shadowOpacity: Double = 0.05
+        static let shadowRadius: CGFloat = 12
+        static let shadowOffset = CGSize(width: 0, height: 4)
+        static let shadowOpacity: Double = 0.15
+        static let blurRadius: CGFloat = 20
     }
 }

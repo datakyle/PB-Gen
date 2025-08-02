@@ -11,11 +11,13 @@ struct TournamentDetailsView: View {
     
     // MARK: - Properties
     @ObservedObject var viewModel: TournamentViewModel
+    let tournamentName: String
     
     let onScheduleGenerated: () -> Void
     let onNewTournament: () -> Void
     let onViewSavedTournaments: () -> Void
     let onAppReset: () -> Void
+    let onTournamentSelection: () -> Void
     
     // MARK: - State
     @FocusState private var focusedField: Int?
@@ -25,69 +27,98 @@ struct TournamentDetailsView: View {
     @State private var showInsufficientPlayersAlert: Bool = false
     
     var body: some View {
-        NavigationView {
-            List {
-                tournamentInfoSection
-                playersSection
+        ScrollView {
+            VStack(spacing: Theme.Spacing.lg) {
+                // Shared Header
+                TabHeaderView(
+                    tabName: "DETAILS",
+                    tournamentName: tournamentName,
+                    onTournamentSelection: onTournamentSelection
+                )
+                
+                tournamentInfoCard
+                playersCard
                 duplicateNamesWarning
-                gameSettingsSection
-                generateScheduleSection
-                tournamentManagementSection
-                dangerZoneSection
+                gameSettingsCard
+                generateScheduleCard
+                tournamentManagementCard
+                dangerZoneCard
             }
-            .listStyle(InsetGroupedListStyle())
-            .navigationTitle("Tournament Details")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(isEditing ? "Done" : "Edit") {
-                        withAnimation {
-                            isEditing.toggle()
-                        }
-                    }
-                }
-            }
-            .alert("Warning", isPresented: $showResetWarning) {
-                Button("Cancel", role: .cancel) { }
-                Button("Proceed", role: .destructive) {
-                    showResetConfirmation = true
-                }
-            } message: {
-                Text("Resetting the app will delete all tournaments and data. This action cannot be undone.")
-            }
-            .alert("Confirm Reset", isPresented: $showResetConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Reset", role: .destructive) {
+            .padding(Theme.Spacing.md)
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(isEditing ? "Done" : "Edit") {
                     withAnimation {
-                        onAppReset()
+                        isEditing.toggle()
                     }
                 }
-            } message: {
-                Text("Are you absolutely sure you want to reset the app? All data will be permanently deleted.")
+                .foregroundColor(.black)
             }
-            .alert("Cannot Generate Schedule", isPresented: $showInsufficientPlayersAlert) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("Please enter at least \(AppConstants.Tournament.minimumPlayers) player names to generate schedule")
+        }
+        .alert("Warning", isPresented: $showResetWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("Proceed", role: .destructive) {
+                showResetConfirmation = true
             }
+        } message: {
+            Text("Resetting the app will delete all tournaments and data. This action cannot be undone.")
+        }
+        .alert("Confirm Reset", isPresented: $showResetConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Reset", role: .destructive) {
+                withAnimation {
+                    onAppReset()
+                }
+            }
+        } message: {
+            Text("Are you absolutely sure you want to reset the app? All data will be permanently deleted.")
+        }
+        .alert("Cannot Generate Schedule", isPresented: $showInsufficientPlayersAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please enter at least \(AppConstants.Tournament.minimumPlayers) player names to generate schedule")
         }
     }
     
-    // MARK: - Sections
+    // MARK: - Cards
     @ViewBuilder
-    var tournamentInfoSection: some View {
-        Section(header: Text("Tournament Info")) {
+    var tournamentInfoCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             HStack {
-                Label("Name", systemImage: "trophy")
+                Image(systemName: "trophy.fill")
+                    .foregroundColor(.orange)
+                    .imageScale(.large)
+                Text("Tournament Info")
+                    .font(Theme.Typography.headline)
+                Spacer()
+            }
+            
+            HStack {
+                Text("Name:")
+                    .font(Theme.Typography.body)
+                    .foregroundColor(.secondary)
                 Spacer()
                 Text(viewModel.tournamentName)
-                    .foregroundColor(Theme.Colors.secondary)
+                    .font(Theme.Typography.body.weight(.medium))
             }
         }
+        .padding(Theme.Spacing.md)
+        .gradientCardStyle()
     }
     
     @ViewBuilder
-    var playersSection: some View {
-        Section(header: Text("Players (\(viewModel.validPlayerCount))")) {
+    var playersCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            HStack {
+                Image(systemName: "person.3.fill")
+                    .foregroundColor(.blue)
+                    .imageScale(.large)
+                Text("Players (\(viewModel.validPlayerCount))")
+                    .font(Theme.Typography.headline)
+                Spacer()
+            }
+            
             ForEach(viewModel.playerNames.indices, id: \.self) { index in
                 HStack {
                     TextField("Player \(index + 1)", text: $viewModel.playerNames[index])
@@ -96,8 +127,12 @@ struct TournamentDetailsView: View {
                             viewModel.validatePlayerName(at: index)
                         }
                         .foregroundColor(viewModel.duplicateNames.contains(viewModel.playerNames[index]) ? Theme.Colors.error : .primary)
+                        .padding(.vertical, Theme.Spacing.xs)
+                        .padding(.horizontal, Theme.Spacing.sm)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(Theme.Layout.cornerRadius - 4)
                     
-                    if isEditing {
+                    if isEditing && viewModel.playerNames.count > AppConstants.Tournament.minimumPlayers {
                         Button(action: {
                             withAnimation {
                                 viewModel.removePlayer(at: IndexSet(integer: index))
@@ -110,9 +145,6 @@ struct TournamentDetailsView: View {
                     }
                 }
             }
-            .onDelete { offsets in
-                viewModel.removePlayer(at: offsets)
-            }
             
             Button(action: {
                 withAnimation(.spring(duration: AppConstants.UI.springAnimation)) {
@@ -120,86 +152,212 @@ struct TournamentDetailsView: View {
                     focusedField = viewModel.playerNames.count - 1
                 }
             }) {
-                Label("Add Player", systemImage: "person.badge.plus")
+                HStack {
+                    Image(systemName: "person.badge.plus")
+                    Text("Add Player")
+                }
+                .font(Theme.Typography.body.weight(.medium))
+                .foregroundColor(.blue)
+                .padding(.vertical, Theme.Spacing.sm)
             }
         }
+        .padding(Theme.Spacing.md)
+        .gradientCardStyle()
     }
     
     @ViewBuilder
     var duplicateNamesWarning: some View {
         if !viewModel.duplicateNames.isEmpty {
-            Section {
-                Label("Duplicate names detected", systemImage: "exclamationmark.triangle")
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundColor(Theme.Colors.error)
+                Text("Duplicate names detected")
+                    .font(Theme.Typography.body)
+                    .foregroundColor(Theme.Colors.error)
+                Spacer()
             }
+            .padding(Theme.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius)
+                    .fill(Theme.Colors.error.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius)
+                            .stroke(Theme.Colors.error.opacity(0.3), lineWidth: 1)
+                    )
+            )
         }
     }
     
     @ViewBuilder
-    var gameSettingsSection: some View {
-        Section(header: Text("Game Settings")) {
-            Stepper("Rounds: \(viewModel.numberOfRounds)", 
-                   value: $viewModel.numberOfRounds, 
-                   in: AppConstants.Tournament.minimumRounds...AppConstants.Tournament.maximumRounds)
+    var gameSettingsCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            HStack {
+                Image(systemName: "gearshape.fill")
+                    .foregroundColor(.purple)
+                    .imageScale(.large)
+                Text("Game Settings")
+                    .font(Theme.Typography.headline)
+                Spacer()
+            }
             
-            Stepper("Courts: \(viewModel.numberOfCourts)", 
-                   value: $viewModel.numberOfCourts, 
-                   in: AppConstants.Tournament.minimumCourts...AppConstants.Tournament.maximumCourts)
-        }
-    }
-    
-    @ViewBuilder
-    var generateScheduleSection: some View {
-        Section {
-            Button(action: {
-                if viewModel.canGenerateSchedule {
-                    onScheduleGenerated()
-                } else {
-                    showInsufficientPlayersAlert = true
-                }
-            }) {
+            VStack(spacing: Theme.Spacing.sm) {
                 HStack {
+                    Text("Rounds:")
+                        .font(Theme.Typography.body)
                     Spacer()
-                    Label("Generate Schedule", systemImage: "calendar")
+                    Stepper("\(viewModel.numberOfRounds)", 
+                           value: $viewModel.numberOfRounds, 
+                           in: AppConstants.Tournament.minimumRounds...AppConstants.Tournament.maximumRounds)
+                    .labelsHidden()
+                }
+                
+                HStack {
+                    Text("Courts:")
+                        .font(Theme.Typography.body)
                     Spacer()
+                    Stepper("\(viewModel.numberOfCourts)", 
+                           value: $viewModel.numberOfCourts, 
+                           in: AppConstants.Tournament.minimumCourts...AppConstants.Tournament.maximumCourts)
+                    .labelsHidden()
                 }
             }
-            .listRowBackground(viewModel.canGenerateSchedule ? Theme.Colors.primary : Theme.Colors.secondary)
-            .foregroundColor(.white)
-            .font(Theme.Typography.button)
         }
+        .padding(Theme.Spacing.md)
+        .gradientCardStyle()
     }
     
     @ViewBuilder
-    var tournamentManagementSection: some View {
-        Section {
+    var generateScheduleCard: some View {
+        Button(action: {
+            if viewModel.canGenerateSchedule {
+                onScheduleGenerated()
+            } else {
+                showInsufficientPlayersAlert = true
+            }
+        }) {
+            HStack {
+                Image(systemName: "calendar.badge.plus")
+                    .imageScale(.large)
+                Text("Generate Schedule")
+                    .font(Theme.Typography.button)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(Theme.Spacing.md)
+            .background(viewModel.canGenerateSchedule ? Color.black : Color.gray)
+            .foregroundColor(.white)
+            .cornerRadius(Theme.Layout.cardCornerRadius)
+            .shadow(
+                color: viewModel.canGenerateSchedule ? Color.black.opacity(0.3) : Color.clear,
+                radius: 8, x: 0, y: 4
+            )
+        }
+        .disabled(!viewModel.canGenerateSchedule)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.canGenerateSchedule)
+    }
+    
+    @ViewBuilder
+    var tournamentManagementCard: some View {
+        VStack(spacing: Theme.Spacing.sm) {
             Button(action: onNewTournament) {
-                Label("Create New Tournament", systemImage: "plus.circle")
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                    Text("Create New Tournament")
+                }
+                .gradientSecondaryButtonStyle()
             }
             
             Button(action: onViewSavedTournaments) {
-                Label("View Saved Tournaments", systemImage: "folder")
+                HStack {
+                    Image(systemName: "folder.fill")
+                    Text("View Saved Tournaments")
+                }
+                .gradientSecondaryButtonStyle()
             }
         }
     }
     
     @ViewBuilder
-    var dangerZoneSection: some View {
-        Section {
-            Button(action: { showResetWarning = true }) {
-                Label("Reset App", systemImage: "arrow.counterclockwise")
+    var dangerZoneCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundColor(Theme.Colors.error)
+                    .imageScale(.large)
+                Text("Danger Zone")
+                    .font(Theme.Typography.headline)
+                    .foregroundColor(Theme.Colors.error)
+                Spacer()
+            }
+            
+            VStack(spacing: Theme.Spacing.sm) {
+                Button(action: { 
+                    // Add cleanup action
+                    onCleanupLeaderboard()
+                }) {
+                    HStack {
+                        Image(systemName: "trash.circle")
+                        Text("Clean Leaderboard")
+                    }
+                    .font(Theme.Typography.body.weight(.medium))
+                    .foregroundColor(.orange)
+                    .padding(Theme.Spacing.sm)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(Theme.Layout.cornerRadius)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Layout.cornerRadius)
+                            .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                
+                Button(action: { showResetWarning = true }) {
+                    HStack {
+                        Image(systemName: "arrow.counterclockwise")
+                        Text("Reset App")
+                    }
+                    .font(Theme.Typography.body.weight(.medium))
+                    .foregroundColor(Theme.Colors.error)
+                    .padding(Theme.Spacing.sm)
+                    .frame(maxWidth: .infinity)
+                    .background(Theme.Colors.error.opacity(0.1))
+                    .cornerRadius(Theme.Layout.cornerRadius)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Layout.cornerRadius)
+                            .stroke(Theme.Colors.error.opacity(0.3), lineWidth: 1)
+                    )
+                }
             }
         }
+        .padding(Theme.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius)
+                .fill(Color.white.opacity(0.95))
+                .shadow(
+                    color: Theme.Colors.error.opacity(0.2),
+                    radius: Theme.Layout.shadowRadius,
+                    x: 0, y: 4
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius)
+                .stroke(Theme.Colors.error.opacity(0.2), lineWidth: 1)
+        )
     }
 }
 
 #Preview {
-    TournamentDetailsView(
-        viewModel: TournamentViewModel(),
-        onScheduleGenerated: {},
-        onNewTournament: {},
-        onViewSavedTournaments: {},
-        onAppReset: {}
-    )
+    ZStack {
+        Theme.Gradients.mainBackground
+            .ignoresSafeArea()
+        
+        TournamentDetailsView(
+            viewModel: TournamentViewModel(),
+            tournamentName: "Summer Tournament",
+            onScheduleGenerated: {},
+            onNewTournament: {},
+            onViewSavedTournaments: {},
+            onAppReset: {},
+            onTournamentSelection: {}
+        )
+    }
 }
