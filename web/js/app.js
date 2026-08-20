@@ -38,6 +38,10 @@
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     dropdown: '<circle cx="12" cy="12" r="9"/><path d="M8.5 11l3.5 3 3.5-3"/>',
     spinner: '<path d="M12 3a9 9 0 1 0 9 9" fill="none"/>',
+    list: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+    cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/>',
+    chart: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
+    pball: '<circle cx="12" cy="12" r="9"/><circle cx="9.5" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="16.5" r="1.1" fill="currentColor" stroke="none"/>',
   };
   function icon(name, cls) {
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${cls ? ` class="${cls}"` : ""}>${P[name] || ""}</svg>`;
@@ -208,32 +212,35 @@
     ];
     return `
     <div class="screen create">
-      <div class="brand-head">
-        <button class="round-icon-btn" data-act="goSaved" ${hasSaved ? "" : "disabled"} aria-label="Saved tournaments">${icon("back")}</button>
-        <div class="wordmark">PB GEN</div>
-        <div style="width:44px"></div>
-      </div>
+      <section class="hero-tile">
+        <button class="icon-circ" data-act="goSaved" ${hasSaved ? "" : "disabled"} aria-label="Saved tournaments">${icon("back")}</button>
+        <span class="brand-glyph">${icon("pball")}</span>
+        <div class="wordmark-lg">PB GEN</div>
+        <div class="hero-tagline">Americano, perfectly mixed.</div>
+      </section>
 
       <div class="create-body">
-        <div class="card type-card">
-          <h2>What kind of tournament<br>would you like to create?</h2>
-          ${types.map((ty) => `
-            <button class="type-opt ${state.draft.type === ty.id ? "selected" : ""} ${ty.on ? "" : "disabled"}"
-              data-act="pickType" data-type="${ty.id}" ${ty.on ? "" : "disabled"}>
-              ${ty.label}${ty.on ? "" : '<span class="soon">SOON</span>'}
-            </button>`).join("")}
+        <div>
+          <h2 class="section-q">What would you like to create?</h2>
+          <div class="fmt-list">
+            ${types.map((ty) => `
+              <button class="fmt-opt ${state.draft.type === ty.id ? "selected" : ""} ${ty.on ? "" : "disabled"}"
+                data-act="pickType" data-type="${ty.id}" ${ty.on ? "" : "disabled"}>
+                <span>${ty.label}</span>
+                ${ty.on ? (state.draft.type === ty.id ? `<span class="tick">${icon("check")}</span>` : "") : '<span class="soon">Soon</span>'}
+              </button>`).join("")}
+          </div>
         </div>
 
-        <div class="name-block">
-          <label for="tname">NAME OF TOURNAMENT</label>
-          <input id="tname" class="field" type="text" autocomplete="off" placeholder="e.g. Saturday Social"
+        <div>
+          <label class="input-label" for="tname">Tournament name</label>
+          <input id="tname" class="input-pill" type="text" autocomplete="off" placeholder="e.g. Saturday Social"
             value="${esc(state.draft.name)}" maxlength="40" />
         </div>
-      </div>
 
-      <div class="start-wrap">
-        <button class="start-btn" data-act="start" ${canStart ? "" : "disabled"} aria-label="Start tournament">${icon("fwd")}</button>
-        <div class="start-label">START</div>
+        <div class="create-cta">
+          <button class="btn btn-primary" data-act="start" ${canStart ? "" : "disabled"}>Start Tournament</button>
+        </div>
       </div>
     </div>`;
   }
@@ -243,9 +250,9 @@
     const list = Store.listTournaments();
     return `
     <div class="screen">
-      <div class="brand-head">
+      <div class="brand-head-sm">
         <button class="round-icon-btn" data-act="backFromSaved" aria-label="Back">${icon("back")}</button>
-        <div class="wordmark" style="font-size:20px;letter-spacing:2px">SAVED</div>
+        <h1>Saved</h1>
         <button class="round-icon-btn" data-act="toggleEdit" aria-label="Edit">${state.editingPlayers ? icon("check") : icon("trash")}</button>
       </div>
       <div class="scroll no-tabbar">
@@ -278,12 +285,12 @@
     if (state.tab === 0) body = tabDetails();
     else if (state.tab === 1) body = tabSchedule();
     else body = tabLeaderboard();
-    const tabs = ["Details", "Schedule", "Leaderboard"];
+    const tabs = [["Details", "list"], ["Schedule", "cal"], ["Leaderboard", "chart"]];
     return `
     <div class="screen">
       ${body}
       <div class="tabbar" role="tablist">
-        ${tabs.map((t, i) => `<button role="tab" class="${state.tab === i ? "active" : ""}" data-act="tab" data-i="${i}" aria-selected="${state.tab === i}">${t}</button>`).join("")}
+        ${tabs.map(([t, ic], i) => `<button role="tab" class="${state.tab === i ? "active" : ""}" data-act="tab" data-i="${i}" aria-selected="${state.tab === i}">${icon(ic)}<span>${t}</span></button>`).join("")}
       </div>
     </div>`;
   }
@@ -312,13 +319,13 @@
       ${tabHeader("DETAILS")}
 
       <div class="card">
-        <h3 class="card-title"><span style="color:var(--orange)" class="ico">${icon("trophy")}</span> Tournament Info</h3>
+        <h3 class="card-title"><span class="ico">${icon("trophy")}</span> Tournament Info</h3>
         <div class="info-row"><span class="k">Name</span><span class="v">${esc(t.name)}</span></div>
         <div class="info-row"><span class="k">Format</span><span class="v">Americano</span></div>
       </div>
 
       <div class="card">
-        <h3 class="card-title"><span style="color:var(--blue)" class="ico">${icon("people")}</span> Players <span class="count">(${validCount})</span></h3>
+        <h3 class="card-title"><span class="ico">${icon("people")}</span> Players <span class="count">(${validCount})</span></h3>
         <div id="player-list">
           ${t.players.map((name, i) => playerRow(name, i, dupes)).join("")}
         </div>
@@ -328,7 +335,7 @@
       <div id="dupe-warn">${dupes.size ? dupeWarn() : ""}</div>
 
       <div class="card">
-        <h3 class="card-title"><span style="color:var(--purple)" class="ico">${icon("gear")}</span> Game Settings</h3>
+        <h3 class="card-title"><span class="ico">${icon("gear")}</span> Game Settings</h3>
         ${settingRow("Rounds", "rounds", t.numberOfRounds, LIMITS.minRounds, LIMITS.maxRounds)}
         ${settingRow("Courts", "courts", t.numberOfCourts, LIMITS.minCourts, LIMITS.maxCourts)}
       </div>
@@ -415,7 +422,7 @@
           ${open ? "" : `<div class="preview">${preview}</div>`}
         </span>
         <span class="right">
-          <span class="progress-pill">${done}/${matches.length}</span>
+          <span class="progress-pill ${done === matches.length && matches.length ? "done" : ""}">${done}/${matches.length}</span>
           <span class="chev">${icon("chevd")}</span>
         </span>
       </button>
@@ -466,17 +473,15 @@
 
   function lbRow(s, pos) {
     const rankIco = pos === 1 ? icon("trophy") : pos <= 3 ? icon("medal") : icon("person");
-    const rankColor = pos === 1 ? "var(--gold)" : pos === 2 ? "var(--silver)" : pos === 3 ? "var(--bronze)" : "var(--blue)";
     const topCls = pos <= 3 ? `top${pos}` : "";
     const diff = s.pointDifferential;
-    const diffCls = diff > 0 ? "pos" : diff < 0 ? "neg" : "";
     const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
     return `
     <div class="lb-row ${topCls}">
-      <span class="lb-rank"><span style="color:${rankColor}">${rankIco}</span><span class="num">${pos}</span></span>
+      <span class="lb-rank"><span class="rankico">${rankIco}</span><span class="num">${pos}</span></span>
       <span class="lb-name">${esc(s.name)}</span>
       <span class="lb-stats">
-        <span class="stat ${diffCls}"><span class="v">${diffStr}</span><span class="l">Pts</span></span>
+        <span class="stat"><span class="v">${diffStr}</span><span class="l">Pts</span></span>
         <span class="stat"><span class="v">${s.wins}</span><span class="l">W</span></span>
         <span class="stat"><span class="v">${s.losses}</span><span class="l">L</span></span>
         <span class="stat rest"><span class="v">${s.rests}</span><span class="l">R</span></span>

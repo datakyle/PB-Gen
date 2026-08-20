@@ -1,17 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff2c2"/>
-      <stop offset="0.45" stop-color="#ffd766"/>
-      <stop offset="1" stop-color="#e64ce6"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#g)"/>
-  <circle cx="256" cy="240" r="118" fill="none" stroke="#111114" stroke-width="26"/>
-  <g fill="#111114">
-    <circle cx="212" cy="200" r="15"/><circle cx="256" cy="200" r="15"/><circle cx="300" cy="200" r="15"/>
-    <circle cx="212" cy="244" r="15"/><circle cx="256" cy="244" r="15"/><circle cx="300" cy="244" r="15"/>
-    <circle cx="234" cy="288" r="15"/><circle cx="278" cy="288" r="15"/>
+  <rect width="512" height="512" rx="112" fill="#1d1d1f"/>
+  <circle cx="256" cy="222" r="120" fill="none" stroke="#ffffff" stroke-width="24"/>
+  <g fill="#ffffff">
+    <circle cx="214" cy="184" r="15"/><circle cx="256" cy="184" r="15"/><circle cx="298" cy="184" r="15"/>
+    <circle cx="214" cy="226" r="15"/><circle cx="256" cy="226" r="15"/><circle cx="298" cy="226" r="15"/>
+    <circle cx="235" cy="268" r="15"/><circle cx="277" cy="268" r="15"/>
   </g>
-  <text x="256" y="440" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="88" font-weight="800" letter-spacing="6" text-anchor="middle" fill="#111114">PB</text>
+  <circle cx="256" cy="222" r="120" fill="none" stroke="#f5b301" stroke-width="6" stroke-dasharray="10 26" opacity="0.9"/>
+  <text x="256" y="432" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="80" font-weight="600" letter-spacing="8" text-anchor="middle" fill="#ffffff">PB</text>
 </svg>
