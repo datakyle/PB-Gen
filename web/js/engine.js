@@ -155,7 +155,7 @@
   }
 
   /** What a finished schedule actually delivers. */
-  function analyzeSchedule(players, schedule, restingByRound) {
+  function analyzeSchedule(players, schedule, restingByRound, availability) {
     const partner = new Map(), oppose = new Map();
     const games = {}, rests = {};
     for (const p of players) { games[p] = 0; rests[p] = 0; }
@@ -197,6 +197,9 @@
       restMax: rv.length ? Math.max(...rv) : 0,
       // A complete rotation: everyone partnered everyone, nobody twice.
       perfectRotation: partner.size === totalPairs && pv.every((c) => c === 1),
+      // With people arriving late or leaving early, a games-played range is
+      // expected rather than unfair, so say which case this is.
+      partialAttendance: !!availability && Object.keys(availability).length > 0,
     };
   }
 
@@ -245,6 +248,12 @@
       this.lockedPairs = (o.lockedPairs || []).map(([a, b]) => pairKey(a, b));
       this.avoidSet = new Set((o.avoidPairs || []).map(([a, b]) => pairKey(a, b)));
 
+      // Availability windows, as { name: { from, to } } with zero-based,
+      // inclusive round numbers. Absent means present for the whole session.
+      // Someone who has not arrived yet is not "resting" — they are away, and
+      // must not be counted against anyone's share of sit-outs.
+      this.availability = o.availability || null;
+
       // Partnerships and oppositions are counted separately: they answer
       // different questions and conflating them made the chooser treat a
       // frequent opponent as a worn-out partner.
@@ -269,11 +278,27 @@
     _oc(k) { return this.opponentCount.get(k) || 0; }
     _rand() { return this.rng.nextDouble(); }
 
-    /** How many courts this group can actually fill. */
-    _courtsInUse() {
+    /** How many courts a group of this size can actually fill. */
+    _courtsFor(count) {
       const seats = this.numberOfCourts * 4;
-      const playing = Math.min(this.players.length, seats - (seats % 4));
+      const playing = Math.min(count, seats - (seats % 4));
       return Math.floor(playing / 4);
+    }
+
+    _courtsInUse() {
+      return this._courtsFor(this.players.length);
+    }
+
+    /** Who is actually here for this round. */
+    _availableAt(round) {
+      if (!this.availability) return this.players;
+      return this.players.filter((p) => {
+        const a = this.availability[p];
+        if (!a) return true;
+        if (a.from != null && round < a.from) return false;
+        if (a.to != null && round > a.to) return false;
+        return true;
+      });
     }
 
     /** What it costs for these two to partner again. */
@@ -431,9 +456,9 @@
     }
 
     /** Choose who sits out: level the totals first, then who waited longest. */
-    _chooseResters(count, round) {
+    _chooseResters(candidates, count, round) {
       if (count <= 0) return [];
-      const ordered = shuffleWith(this.players, () => this._rand()).sort((a, b) => {
+      const ordered = shuffleWith(candidates, () => this._rand()).sort((a, b) => {
         if (this.restCount[a] !== this.restCount[b]) return this.restCount[a] - this.restCount[b];
         if (this.lastRestRound[a] !== this.lastRestRound[b]) return this.lastRestRound[a] - this.lastRestRound[b];
         return this.gamesPlayed[b] - this.gamesPlayed[a];
@@ -478,6 +503,8 @@
       // A fixed table cannot honour locked or avoided pairs, and a custom
       // mixing preference is a request the table cannot answer either.
       if (this.lockedPairs.length || this.avoidSet.size) return null;
+      // The tables assume everyone is present for every round.
+      if (this.availability) return null;
       if (this.wPartner !== W_PARTNER || this.wOpponent !== W_OPPONENT) return null;
       const seat = shuffleWith(this.players, () => this._rand());
       return rounds.map((games) =>
@@ -508,16 +535,23 @@
     }
 
     _generateRound(round) {
-      const courts = this._courtsInUse();
-      const playing = courts * 4;
+      const here = this._availableAt(round);
+      const courts = this._courtsFor(here.length);
 
-      const resting = this._chooseResters(this.players.length - playing, round);
+      // Too few people present to fill even one court.
+      if (courts < 1) {
+        this.lastRoundPartners = new Set();
+        return { matches: [], resting: here.slice(), away: this._awayAt(round) };
+      }
+
+      const playing = courts * 4;
+      const resting = this._chooseResters(here, here.length - playing, round);
       const restingSet = new Set(resting);
       for (const p of resting) {
         this.restCount[p] += 1;
         this.lastRestRound[p] = round;
       }
-      const pool = this.players.filter((p) => !restingSet.has(p));
+      const pool = here.filter((p) => !restingSet.has(p));
 
       const courtsForRound = this._optimiseRound(pool);
       const matches = [];
@@ -528,7 +562,14 @@
         partnersThisRound.add(pairKey(split.team2[0], split.team2[1]));
       });
       this.lastRoundPartners = partnersThisRound;
-      return { matches, resting };
+      return { matches, resting, away: this._awayAt(round) };
+    }
+
+    /** Players not present for this round at all. */
+    _awayAt(round) {
+      if (!this.availability) return [];
+      const here = new Set(this._availableAt(round));
+      return this.players.filter((p) => !here.has(p));
     }
 
     generateSchedule() {
@@ -551,16 +592,22 @@
       const plan = this._whistPlan();
       this.usedPerfectTable = false;
 
+      this.awayByRound = {};
       for (let round = 0; round < this.numberOfRounds; round++) {
         const fromPlan = plan && round < plan.length;
-        const { matches, resting } = fromPlan
+        const { matches, resting, away } = fromPlan
           ? this._roundFromPlan(plan[round], round)
           : this._generateRound(round);
         if (fromPlan) this.usedPerfectTable = true;
         schedule = schedule.concat(matches);
         this.restingPlayersByRound[round] = resting;
+        if (away && away.length) this.awayByRound[round] = away;
       }
-      return { schedule, restingByRound: this.restingPlayersByRound };
+      return {
+        schedule,
+        restingByRound: this.restingPlayersByRound,
+        awayByRound: this.awayByRound,
+      };
     }
 
     /** Rebuild counters from a schedule so an added round continues fairly. */
@@ -622,13 +669,13 @@
       }
       this._replay(existingSchedule);
 
-      const { matches, resting } = this._generateRound(newRound);
+      const { matches, resting, away } = this._generateRound(newRound);
       if (matches.length === 0) {
         this.numberOfRounds -= 1;
         return null;
       }
       this.restingPlayersByRound[newRound] = resting;
-      return { matches, resting };
+      return { matches, resting, away: away || [] };
     }
   }
   // Lightweight UUID (RFC4122 v4-ish) — crypto when available.

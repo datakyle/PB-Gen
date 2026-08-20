@@ -720,3 +720,8 @@ button:focus-visible, .field:focus-visible, .fmt-opt:focus-visible, .saved-item:
 }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* availability (beta) */
+.resting.away { background: rgba(0,0,0,0.04); }
+.avail-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.avail-tag { font-size: 13px; color: var(--ink-48); letter-spacing: -0.08px; flex: none; }

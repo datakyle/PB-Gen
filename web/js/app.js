@@ -203,6 +203,7 @@
     }
     if (t.lockedPairs && t.lockedPairs.length) opts.lockedPairs = t.lockedPairs;
     if (t.avoidPairs && t.avoidPairs.length) opts.avoidPairs = t.avoidPairs;
+    if (t.availability && Object.keys(t.availability).length) opts.availability = t.availability;
     return Object.keys(opts).length ? opts : undefined;
   }
 
@@ -217,6 +218,7 @@
     t.players = players;
     t.schedule = result.schedule;
     t.restingByRound = result.restingByRound;
+    t.awayByRound = result.awayByRound || {};
     const producedRounds = new Set(result.schedule.map((m) => m.round)).size;
     state.expanded = new Set([0]);
     saveCurrent();
@@ -469,6 +471,17 @@
     </div>`;
   }
 
+  /** Rounds are stored zero-based; people count from one. */
+  function availLabel(a) {
+    if (!a) return "all rounds";
+    const from = a.from != null ? a.from + 1 : null;
+    const to = a.to != null ? a.to + 1 : null;
+    if (from && to) return `rounds ${from}\u2013${to}`;
+    if (from) return `from round ${from}`;
+    if (to) return `until round ${to}`;
+    return "all rounds";
+  }
+
   // ------------------------------------------------------- advanced (beta)
   function advancedCard(t) {
     const mix = t.mix || "balanced";
@@ -501,6 +514,17 @@
       <div class="adv-label">Keep apart</div>
       <div class="pair-list">${avoid.length ? pairRow(avoid, "avoid") : `<span class="adv-empty">No one kept apart</span>`}</div>
       <button class="link-btn" data-act="addPair" data-kind="avoid">${icon("plus")} Add pair to separate</button>
+
+      <div class="adv-label">Who's here when</div>
+      <div class="pair-list">${
+        Object.keys(t.availability || {}).length
+          ? Object.keys(t.availability).map((n) => `
+              <span class="pair-chip">${esc(n)} · ${esc(availLabel(t.availability[n]))}
+                <button class="pair-x" data-act="clearAvail" data-name="${esc(n)}" aria-label="Clear">${icon("x")}</button>
+              </span>`).join("")
+          : `<span class="adv-empty">Everyone is here all session</span>`
+      }</div>
+      <button class="link-btn" data-act="editAvailability">${icon("plus")} Set arrival or departure</button>
 
       ${(locked.length || mix !== "balanced")
         ? `<p class="adv-warn">${icon("warn")} These override the perfect rotation, so some pairings will repeat.</p>` : ""}
@@ -586,7 +610,7 @@
    * without ever showing it; this states it in the schedule's own terms.
    */
   function fairnessCard(t) {
-    const a = E.analyzeSchedule(t.players, t.schedule, t.restingByRound);
+    const a = E.analyzeSchedule(t.players, t.schedule, t.restingByRound, t.availability);
     const open = state.fairnessOpen;
     const headline = a.perfectRotation
       ? "Everyone partners everyone, exactly once"
@@ -601,7 +625,9 @@
         : `Nobody faces the same player more than ${a.opponentMax}×.`,
       a.gamesSpread === 0
         ? `Everyone plays ${a.gamesMax} games.`
-        : `Games played: ${a.gamesMin}–${a.gamesMax}.`,
+        : (a.partialAttendance
+            ? `Games played: ${a.gamesMin}–${a.gamesMax}, since not everyone is here throughout.`
+            : `Games played: ${a.gamesMin}–${a.gamesMax}.`),
       a.restMax === 0
         ? `Nobody sits out.`
         : (a.restSpread === 0 ? `Everyone sits out ${a.restMax}×.` : `Sit-outs differ by at most ${a.restSpread}.`),
@@ -622,6 +648,7 @@
     const t = state.t;
     const matches = t.schedule.filter((m) => m.round === r);
     const resting = t.restingByRound[r] || t.restingByRound[String(r)] || [];
+    const away = (t.awayByRound && (t.awayByRound[r] || t.awayByRound[String(r)])) || [];
     const open = state.expanded.has(r);
     const done = matches.filter((m) => m.winningTeam).length;
     const preview = matches.length === 1
@@ -640,8 +667,11 @@
         </span>
       </button>
       <div class="round-body">
-        ${matches.map((m) => matchView(m)).join("")}
+        ${matches.length
+          ? matches.map((m) => matchView(m)).join("")
+          : `<div class="resting">${icon("warn")} Not enough players available for this round.</div>`}
         ${resting.length ? `<div class="resting">${icon("seat")} Sitting out: ${resting.map(esc).join(", ")}</div>` : ""}
+        ${away.length ? `<div class="resting away">${icon("person")} Away: ${away.map(esc).join(", ")}</div>` : ""}
       </div>
     </div>`;
   }
@@ -824,6 +854,53 @@
       </div>
       <div class="sheet-actions">
         <button class="btn btn-ghost" data-act="closeSheet">Cancel</button>
+      </div>`);
+  }
+
+  /** Pick a player whose arrival or departure differs from the rest. */
+  function availabilitySheet() {
+    const t = state.t;
+    const names = nonEmpty(t.players).map((p) => p.trim());
+    openSheet(`
+      <div class="grabber"></div>
+      <h3>Who's here when</h3>
+      <p>Pick someone who joins late or leaves early.</p>
+      <div class="pick-list">
+        ${names.map((n) => `
+          <button class="pick-row avail-row" data-act="editPlayerAvail" data-name="${esc(n)}">
+            <span>${esc(n)}</span>
+            <span class="avail-tag">${esc(availLabel((t.availability || {})[n]))}</span>
+          </button>`).join("")}
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" data-act="closeSheet">Done</button>
+      </div>`);
+  }
+
+  function playerAvailSheet(name) {
+    const t = state.t;
+    const a = (t.availability || {})[name] || {};
+    const R = t.numberOfRounds;
+    const from = a.from != null ? a.from : 0;
+    const to = a.to != null ? a.to : R - 1;
+    const row = (label, field, val, min, max) => `
+      <div class="setting-row">
+        <span class="label">${label}</span>
+        <span class="stepper">
+          <button data-act="availStep" data-name="${esc(name)}" data-field="${field}" data-dir="-1" ${val <= min ? "disabled" : ""} aria-label="Earlier">−</button>
+          <span class="val">${val + 1}</span>
+          <button data-act="availStep" data-name="${esc(name)}" data-field="${field}" data-dir="1" ${val >= max ? "disabled" : ""} aria-label="Later">+</button>
+        </span>
+      </div>`;
+    openSheet(`
+      <div class="grabber"></div>
+      <h3>${esc(name)}</h3>
+      <p>Which rounds are they here for?</p>
+      ${row("First round", "from", from, 0, to)}
+      ${row("Last round", "to", to, from, R - 1)}
+      <div class="sheet-actions">
+        <button class="btn btn-secondary" data-act="clearAvail" data-name="${esc(name)}">Here all session</button>
+        <button class="btn btn-primary" data-act="closeSheet">Done</button>
       </div>`);
   }
 
@@ -1117,6 +1194,35 @@
         const exists = list.some((p) => p.includes(chosen[0]) && p.includes(chosen[1]));
         if (!exists) list.push([chosen[0], chosen[1]]);
         closeSheet(); saveCurrent(); render(); break;
+      }
+      case "editAvailability": availabilitySheet(); break;
+      case "editPlayerAvail": playerAvailSheet(node.dataset.name); break;
+      case "availStep": {
+        const name = node.dataset.name;
+        const field = node.dataset.field;
+        const dir = Number(node.dataset.dir);
+        t.availability = t.availability || {};
+        const R = t.numberOfRounds;
+        const cur = t.availability[name] || {};
+        const from = cur.from != null ? cur.from : 0;
+        const to = cur.to != null ? cur.to : R - 1;
+        const next = field === "from"
+          ? { from: clamp(from + dir, 0, to), to }
+          : { from, to: clamp(to + dir, from, R - 1) };
+        // Storing a full-session window would just be noise.
+        if (next.from === 0 && next.to === R - 1) delete t.availability[name];
+        else t.availability[name] = next;
+        saveCurrent();
+        render();
+        playerAvailSheet(name);
+        break;
+      }
+      case "clearAvail": {
+        if (t.availability) delete t.availability[node.dataset.name];
+        saveCurrent();
+        closeSheet();
+        render();
+        break;
       }
       case "removePair": {
         const list = node.dataset.kind === "locked" ? t.lockedPairs : t.avoidPairs;
