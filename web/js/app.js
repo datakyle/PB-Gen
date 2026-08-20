@@ -272,6 +272,9 @@
 
   // ============================================================ RENDER
   function render() {
+    // The start screen's ground must cover the whole viewport, not just the
+    // phone-width column, so it is painted on <body>.
+    document.body.classList.toggle("on-start", state.view === "start");
     if (state.view === "start") appEl.innerHTML = viewStart();
     else if (state.view === "saved") appEl.innerHTML = viewSaved();
     else if (state.view === "setup") appEl.innerHTML = viewSetup();
@@ -284,6 +287,19 @@
     const hasSaved = Store.listTournaments().length > 0;
     return `
     <div class="screen start-screen">
+      <div class="start-bg" aria-hidden="true">
+        <span class="orb orb-1"></span>
+        <span class="orb orb-2"></span>
+        <svg class="court-motif" viewBox="0 0 200 440" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <rect x="1" y="1" width="198" height="438" rx="2"/>
+          <line x1="1" y1="220" x2="199" y2="220"/>
+          <line x1="1" y1="150" x2="199" y2="150"/>
+          <line x1="1" y1="290" x2="199" y2="290"/>
+          <line x1="100" y1="1" x2="100" y2="150"/>
+          <line x1="100" y1="290" x2="100" y2="439"/>
+        </svg>
+      </div>
+
       <div class="start-brand">
         <span class="brand-glyph">${icon("pball")}</span>
         <div class="wordmark-lg">PB GEN</div>
