@@ -92,7 +92,7 @@
     sort: "score",
     addingRound: false,
     addRoundError: null,
-    awaiting: null, // { id, team } — winner tapped, waiting on the other score
+    editing: null, // match id whose score wheels are open
   };
 
   // ------------------------------------------------------------- tournament
@@ -138,6 +138,7 @@
       numberOfRounds: 5,
       numberOfCourts: 1,
       pointsTarget: LIMITS.defaultTarget,
+      winBy2: true,
       pointsPerWin: LIMITS.pointsPerWin,
       seed: null,
       schedule: [],
@@ -223,6 +224,36 @@
     }, 60);
   }
 
+  const WHEEL_ITEM_H = 40;
+
+  /**
+   * Apply a wheel change. `moved` says which wheel the person turned, so the
+   * other one gives way when the rules force a gap (win by 2, or simply that
+   * the winner must outscore the loser).
+   */
+  function applyWheel(matchId, moved, value) {
+    const t = state.t;
+    const m = t.schedule.find((x) => x.id === matchId);
+    if (!m || !m.winningTeam) return null;
+
+    let win = m.winningTeam === 1 ? m.team1Score : m.team2Score;
+    let lose = m.winningTeam === 1 ? m.team2Score : m.team1Score;
+    if (moved === "win") win = value; else lose = value;
+
+    const gap = t.winBy2 ? 2 : 1;
+    if (win - lose < gap) {
+      if (moved === "win") lose = Math.max(0, win - gap);
+      else win = Math.min(LIMITS.maxScore, lose + gap);
+      // If the winner hit the ceiling, pull the loser down instead.
+      if (win - lose < gap) lose = Math.max(0, win - gap);
+    }
+
+    if (m.winningTeam === 1) { m.team1Score = win; m.team2Score = lose; }
+    else { m.team2Score = win; m.team1Score = lose; }
+    saveCurrent();
+    return { win, lose };
+  }
+
   /** Record a finished match: winner scored `winScore`, the other `loseScore`. */
   function commitResult(matchId, winnerTeam, winScore, loseScore) {
     const m = state.t.schedule.find((x) => x.id === matchId);
@@ -230,16 +261,6 @@
     if (winnerTeam === 1) { m.team1Score = winScore; m.team2Score = loseScore; }
     else { m.team2Score = winScore; m.team1Score = loseScore; }
     m.winningTeam = m.team1Score === m.team2Score ? null : (m.team1Score > m.team2Score ? 1 : 2);
-    state.awaiting = null;
-    saveCurrent();
-    render();
-  }
-
-  /** Clear a recorded result so it can be entered again. */
-  function setMatchResult(matchId) {
-    const m = state.t.schedule.find((x) => x.id === matchId);
-    if (!m) return;
-    m.team1Score = 0; m.team2Score = 0; m.winningTeam = null;
     saveCurrent();
     render();
   }
@@ -349,6 +370,12 @@
           ${settingRow("Rounds", "rounds", t.numberOfRounds, LIMITS.minRounds, LIMITS.maxRounds)}
           <div id="courts-slot">${courtsRow(t, maxCourts)}</div>
           ${settingRow("Games to", "target", t.pointsTarget, LIMITS.minTarget, LIMITS.maxTarget)}
+          <div class="setting-row">
+            <span class="label">Win by 2</span>
+            <button class="switch" data-act="toggleWinBy2" role="switch" aria-checked="${t.winBy2 ? "true" : "false"}" aria-label="Win by 2">
+              <span class="knob"></span>
+            </button>
+          </div>
           <div class="name-row">
             <label for="tname">Name</label>
             <input id="tname" class="name-input" type="text" autocomplete="off" maxlength="40"
@@ -488,16 +515,14 @@
    * Two taps, no modal — it happens courtside, one-handed.
    */
   function matchView(m) {
-    const t = state.t;
-    const target = t.pointsTarget || LIMITS.defaultTarget;
     const decided = m.winningTeam === 1 || m.winningTeam === 2;
-    const awaiting = state.awaiting && state.awaiting.id === m.id ? state.awaiting.team : null;
-    const winner = awaiting || m.winningTeam;
+    const editing = state.editing === m.id;
+    const winner = m.winningTeam;
 
     function row(teamNo) {
       const team = teamNo === 1 ? m.team1 : m.team2;
       const isWinner = winner === teamNo;
-      const score = decided ? (teamNo === 1 ? m.team1Score : m.team2Score) : (isWinner && awaiting ? target : null);
+      const score = decided ? (teamNo === 1 ? m.team1Score : m.team2Score) : null;
       return `
       <button class="team-pick ${isWinner ? "won" : ""} ${winner && !isWinner ? "lost" : ""}"
         data-act="pickWinner" data-id="${m.id}" data-team="${teamNo}"
@@ -509,18 +534,19 @@
     }
 
     let strip = "";
-    if (awaiting) {
-      const loserTeam = awaiting === 1 ? m.team2 : m.team1;
-      const chips = [];
-      for (let n = 0; n < target; n++) {
-        chips.push(`<button class="chip" data-act="pickLoserScore" data-id="${m.id}" data-n="${n}">${n}</button>`);
-      }
+    if (editing && decided) {
+      const winTeam = winner === 1 ? m.team1 : m.team2;
+      const loseTeam = winner === 1 ? m.team2 : m.team1;
+      const winScore = winner === 1 ? m.team1Score : m.team2Score;
+      const loseScore = winner === 1 ? m.team2Score : m.team1Score;
       strip = `
-      <div class="score-strip">
-        <div class="strip-q">How many did ${teamName(loserTeam)} get?</div>
-        <div class="chip-row">${chips.join("")}
-          <button class="chip other" data-act="otherScore" data-id="${m.id}">Other…</button>
+      <div class="score-editor">
+        <div class="wheels">
+          ${wheelHTML(m.id, "win", teamName(winTeam), winScore)}
+          ${wheelHTML(m.id, "lose", teamName(loseTeam), loseScore)}
         </div>
+        <div class="wheel-note" id="note-${m.id}">${scoreNote(winScore, loseScore)}</div>
+        <button class="btn btn-primary wheel-done" data-act="doneScore">Done</button>
       </div>`;
     } else if (decided) {
       strip = `<div class="score-strip"><button class="strip-link" data-act="changeScore" data-id="${m.id}">Change score</button></div>`;
@@ -535,6 +561,36 @@
       ${row(2)}
       ${strip}
     </div>`;
+  }
+
+  /** An iOS-style scroll wheel of 0…maxScore. */
+  function wheelHTML(matchId, role, label, value) {
+    const items = [];
+    for (let n = 0; n <= LIMITS.maxScore; n++) {
+      items.push(`<div class="wheel-item ${n === value ? "sel" : ""}" data-v="${n}">${n}</div>`);
+    }
+    return `
+    <div class="wheel-col">
+      <div class="wheel-label">${label}</div>
+      <div class="wheel-wrap">
+        <div class="wheel-band" aria-hidden="true"></div>
+        <div class="wheel" data-wheel="${role}" data-id="${matchId}" tabindex="0"
+             role="spinbutton" aria-label="${label} score" aria-valuenow="${value}"
+             aria-valuemin="0" aria-valuemax="${LIMITS.maxScore}">
+          <div class="wheel-list">${items.join("")}</div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function scoreNote(winScore, loseScore) {
+    const t = state.t;
+    const margin = winScore - loseScore;
+    if (t.winBy2 && loseScore >= (t.pointsTarget || LIMITS.defaultTarget) - 1) {
+      return `Deuce — win by 2 at ${winScore}–${loseScore}`;
+    }
+    if (margin === 1 && t.winBy2) return `Needs a 2-point margin`;
+    return `${winScore}–${loseScore}`;
   }
 
   // --------------------------------------------------------- STANDINGS tab
@@ -606,20 +662,6 @@
       </div>`);
   }
 
-  function scoreSheet(matchId, team) {
-    const m = state.t.schedule.find((x) => x.id === matchId);
-    const cur = team === 1 ? m.team1Score : m.team2Score;
-    const nums = [];
-    for (let i = 0; i <= LIMITS.maxScore; i++) nums.push(i);
-    openSheet(`
-      <div class="grabber"></div>
-      <h3>Their score</h3>
-      <p>How many did ${teamName(team === 1 ? m.team1 : m.team2)} get?</p>
-      <div class="num-grid">
-        ${nums.map((n) => `<button class="${n === cur ? "sel" : ""}" data-act="pickScore" data-id="${matchId}" data-team="${team}" data-n="${n}">${n}</button>`).join("")}
-      </div>`);
-  }
-
   function tournamentMenuSheet() {
     openSheet(`
       <div class="grabber"></div>
@@ -669,6 +711,75 @@
         refreshSetupLive();
       });
       inp.addEventListener("blur", saveCurrent);
+    });
+
+    wireWheels();
+  }
+
+  /** Position each wheel at its current value and follow it as it's scrolled. */
+  function wireWheels() {
+    appEl.querySelectorAll(".wheel").forEach((wheel) => {
+      const matchId = wheel.dataset.id;
+      const role = wheel.dataset.wheel;
+      const m = state.t.schedule.find((x) => x.id === matchId);
+      if (!m) return;
+      const win = m.winningTeam === 1 ? m.team1Score : m.team2Score;
+      const lose = m.winningTeam === 1 ? m.team2Score : m.team1Score;
+      wheel.scrollTop = (role === "win" ? win : lose) * WHEEL_ITEM_H;
+
+      let timer = null;
+      wheel.addEventListener("scroll", () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const value = Math.max(0, Math.min(LIMITS.maxScore, Math.round(wheel.scrollTop / WHEEL_ITEM_H)));
+          // Ignore only the settle caused by our own adjustment of this wheel.
+          // Comparing values (rather than holding a flag) means a real turn is
+          // never swallowed, even straight after an auto-adjustment.
+          const expected = wheel.dataset.expect;
+          delete wheel.dataset.expect;
+          if (expected !== undefined && Number(expected) === value) return;
+          const res = applyWheel(matchId, role, value);
+          if (res) syncMatchUI(matchId, res.win, res.lose, role);
+        }, 120);
+      }, { passive: true });
+    });
+  }
+
+  /**
+   * Reflect new scores without a full re-render — re-rendering mid-scroll
+   * would rebuild the wheels and throw away the position under the finger.
+   */
+  function syncMatchUI(matchId, win, lose, movedRole) {
+    const m = state.t.schedule.find((x) => x.id === matchId);
+    if (!m) return;
+    const scope = appEl.querySelector(`.wheel[data-id="${matchId}"]`);
+    const match = scope && scope.closest(".match");
+    if (!match) return;
+
+    match.querySelectorAll(".team-pick").forEach((btn) => {
+      const teamNo = Number(btn.dataset.team);
+      const s = btn.querySelector(".tp-score");
+      if (s) s.textContent = teamNo === 1 ? m.team1Score : m.team2Score;
+    });
+
+    const note = document.getElementById("note-" + matchId);
+    if (note) note.textContent = scoreNote(win, lose);
+
+    // The wheel that gave way has to be moved to match, silently.
+    const otherRole = movedRole === "win" ? "lose" : "win";
+    const other = match.querySelector(`.wheel[data-wheel="${otherRole}"]`);
+    const otherValue = otherRole === "win" ? win : lose;
+    if (other && Math.round(other.scrollTop / WHEEL_ITEM_H) !== otherValue) {
+      other.dataset.expect = String(otherValue);
+      other.scrollTop = otherValue * WHEEL_ITEM_H;
+    }
+
+    match.querySelectorAll(".wheel").forEach((w) => {
+      const v = w.dataset.wheel === "win" ? win : lose;
+      w.setAttribute("aria-valuenow", v);
+      w.querySelectorAll(".wheel-item").forEach((it) => {
+        it.classList.toggle("sel", Number(it.dataset.v) === v);
+      });
     });
   }
 
@@ -824,40 +935,30 @@
         render(); break;
       }
       case "pickWinner": {
-        // Tapping a team marks it the winner and asks for the other team's
-        // score. Tapping the other team just switches the winner.
-        state.awaiting = { id: node.dataset.id, team: Number(node.dataset.team) };
-        render();
-        break;
-      }
-      case "pickLoserScore": {
-        const a = state.awaiting;
-        if (!a || a.id !== node.dataset.id) break;
-        const loserScore = Number(node.dataset.n);
+        // Tapping a team records it as the winner at the default scoreline and
+        // opens the wheels to adjust. Tapping the other team switches sides.
+        const id = node.dataset.id;
+        const team = Number(node.dataset.team);
         const target = t.pointsTarget || LIMITS.defaultTarget;
-        commitResult(a.id, a.team, target, loserScore);
-        break;
-      }
-      case "otherScore": {
-        // Escape hatch: the winner didn't finish on the target score.
-        const a = state.awaiting;
-        if (!a || a.id !== node.dataset.id) break;
-        scoreSheet(a.id, a.team === 1 ? 2 : 1);
+        const m = t.schedule.find((x) => x.id === id);
+        state.editing = id;
+        if (m && m.winningTeam === team) render();
+        else commitResult(id, team, target, Math.max(0, target - 2));
         break;
       }
       case "changeScore":
-        state.awaiting = null;
-        setMatchResult(node.dataset.id, null);
+        state.editing = node.dataset.id;
+        render();
         break;
-      case "pickScore": {
-        // From the "Other…" grid: the tapped number is the loser's score.
-        const a = state.awaiting;
-        closeSheet();
-        if (a && a.id === node.dataset.id) {
-          commitResult(a.id, a.team, t.pointsTarget || LIMITS.defaultTarget, Number(node.dataset.n));
-        }
+      case "doneScore":
+        state.editing = null;
+        render();
         break;
-      }
+      case "toggleWinBy2":
+        t.winBy2 = !t.winBy2;
+        saveCurrent();
+        render();
+        break;
       case "addRound": addRound(); break;
       case "sort": state.sort = node.dataset.k; render(); break;
       case "resetApp":
@@ -886,6 +987,7 @@
         rec.restingByRound = rec.restingByRound || {};
         rec.pointsPerWin = rec.pointsPerWin || LIMITS.pointsPerWin;
         rec.pointsTarget = rec.pointsTarget || LIMITS.defaultTarget;
+        if (rec.winBy2 === undefined) rec.winBy2 = true;
         rec.players = rec.players || ["", "", "", ""];
         state.t = rec;
         if (rec.schedule && rec.schedule.length) {
