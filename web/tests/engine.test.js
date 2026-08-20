@@ -205,6 +205,19 @@ group("Leaderboard — scoring & sorting", () => {
 
   const byRests = E.sortLeaderboard(stats, "rests");
   assert(byRests[0].name === "B", "rest sort ascending (fewest rests first)");
+
+  // "diff" must rank purely by point difference — otherwise it duplicates
+  // "score" and the leaderboard offers two buttons that do the same thing.
+  const spread = {
+    A: { name: "A", wins: 3, losses: 1, pointDifferential: 2, rests: 0 },
+    B: { name: "B", wins: 3, losses: 1, pointDifferential: 9, rests: 2 },
+    C: { name: "C", wins: 1, losses: 3, pointDifferential: -11, rests: 1 },
+    D: { name: "D", wins: 2, losses: 2, pointDifferential: 5, rests: 1 },
+  };
+  const order = (k) => E.sortLeaderboard(spread, k).map((s) => s.name).join(" ");
+  assert(order("diff") === "B D A C", `diff sorts by point difference (got ${order("diff")})`);
+  assert(order("score") === "B A D C", `score sorts by wins first (got ${order("score")})`);
+  assert(order("diff") !== order("score"), "diff and score are genuinely different orderings");
 });
 
 // ---------------------------------------------------------------------------

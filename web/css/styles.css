@@ -334,19 +334,47 @@ body {
 .match { border-top: 1px solid var(--divider); padding: 14px 0 4px; }
 .match:first-child { border-top: none; }
 .match .court { font-size: 12px; font-weight: 600; color: var(--ink-48); letter-spacing: 0.2px; margin-bottom: 10px; text-transform: uppercase; }
-.team-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 0; }
-.team-row .names { font-size: 17px; font-weight: 400; letter-spacing: -0.374px; color: var(--ink-48); display: flex; align-items: center; gap: 6px; }
-.team-row.win .names { color: var(--ink); font-weight: 600; }
-.team-row .check { color: var(--blue); width: 18px; height: 18px; }
-.score-btn {
-  min-width: 48px; height: 40px; border-radius: var(--r-md); border: 1px solid var(--hairline);
-  background: var(--white); font-weight: 600; font-size: 17px; color: var(--ink);
-  cursor: pointer; font-variant-numeric: tabular-nums; font-family: var(--font);
+
+/* Tap-the-winner rows */
+.team-pick {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: var(--white); border: 1px solid var(--hairline); border-radius: var(--r-md);
+  padding: 12px 13px; margin-bottom: 8px; cursor: pointer; font-family: var(--font);
+  text-align: left; min-height: var(--tap);
 }
-.score-btn:active { transform: scale(0.95); }
-.score-btn.win { border-color: var(--blue); color: var(--blue); }
-.vs-div { display: flex; align-items: center; gap: 10px; margin: 8px 0; color: var(--ink-48); font-size: 12px; font-weight: 600; letter-spacing: 0.4px; }
-.vs-div::before, .vs-div::after { content: ""; height: 1px; background: var(--divider); flex: 1; }
+.team-pick:active { transform: scale(0.99); }
+.team-pick .tp-names {
+  flex: 1; min-width: 0; font-size: 16px; font-weight: 400; letter-spacing: -0.3px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.team-pick .tp-dot {
+  width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--hairline); flex: none;
+}
+.team-pick .tp-check { width: 20px; height: 20px; color: var(--blue); flex: none; display: inline-flex; }
+.team-pick .tp-check svg { width: 20px; height: 20px; }
+.team-pick .tp-score {
+  font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); flex: none;
+}
+.team-pick.won { border-color: var(--blue); background: rgba(0,102,204,0.05); }
+.team-pick.won .tp-names { font-weight: 600; }
+.team-pick.lost .tp-names, .team-pick.lost .tp-score { color: var(--ink-48); }
+
+.score-strip { padding: 2px 0 6px; }
+.strip-hint, .strip-q { font-size: 14px; letter-spacing: -0.224px; color: var(--ink-48); }
+.strip-q { margin-bottom: 9px; }
+.strip-link {
+  background: none; border: none; padding: 6px 0; min-height: 36px; cursor: pointer;
+  font-family: var(--font); font-size: 14px; letter-spacing: -0.224px; color: var(--blue);
+}
+.chip-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.chip {
+  min-width: 44px; min-height: 40px; padding: 0 12px; border-radius: var(--r-md);
+  border: 1px solid var(--hairline); background: var(--white); cursor: pointer;
+  font-family: var(--font); font-size: 16px; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.chip:active { transform: scale(0.95); background: var(--canvas); }
+.chip.other { font-weight: 400; color: var(--blue); }
 .resting {
   display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 11px 13px;
   background: var(--canvas); border-radius: var(--r-md); font-size: 14px; font-weight: 400; letter-spacing: -0.224px; color: var(--ink-48);
@@ -381,6 +409,10 @@ body {
 .stat .v { display: block; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; color: var(--ink); }
 .stat .l { display: block; font-size: 10px; font-weight: 600; color: var(--ink-48); text-transform: uppercase; letter-spacing: 0.2px; margin-top: 2px; }
 .stat.rest .v { color: var(--ink-48); }
+.legend {
+  font-size: 13px; letter-spacing: -0.08px; color: var(--ink-48);
+  text-align: center; margin: 14px 0 0;
+}
 
 /* ============================================================ TAB BAR */
 .tabbar {

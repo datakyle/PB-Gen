@@ -14,7 +14,11 @@
   const sheetHost = document.getElementById("sheet-host");
   const toastEl = document.getElementById("toast");
 
-  const LIMITS = { minPlayers: 4, minRounds: 1, maxRounds: 10, minCourts: 1, maxCourts: 5, pointsPerWin: 1, maxScore: 30 };
+  const LIMITS = {
+    minPlayers: 4, minRounds: 1, maxRounds: 10, minCourts: 1, maxCourts: 5,
+    pointsPerWin: 1, maxScore: 30,
+    minTarget: 7, maxTarget: 21, defaultTarget: 11,
+  };
   const MINUTES_PER_ROUND = 12; // rough, for the plan estimate
 
   // ------------------------------------------------------------------ icons
@@ -88,6 +92,7 @@
     sort: "score",
     addingRound: false,
     addRoundError: null,
+    awaiting: null, // { id, team } — winner tapped, waiting on the other score
   };
 
   // ------------------------------------------------------------- tournament
@@ -132,6 +137,7 @@
       players: ["", "", "", ""],
       numberOfRounds: 5,
       numberOfCourts: 1,
+      pointsTarget: LIMITS.defaultTarget,
       pointsPerWin: LIMITS.pointsPerWin,
       seed: null,
       schedule: [],
@@ -217,12 +223,23 @@
     }, 60);
   }
 
-  function setMatchScore(matchId, team, value) {
+  /** Record a finished match: winner scored `winScore`, the other `loseScore`. */
+  function commitResult(matchId, winnerTeam, winScore, loseScore) {
     const m = state.t.schedule.find((x) => x.id === matchId);
     if (!m) return;
-    if (team === 1) m.team1Score = value; else m.team2Score = value;
-    if (m.team1Score === m.team2Score) m.winningTeam = null;
-    else m.winningTeam = m.team1Score > m.team2Score ? 1 : 2;
+    if (winnerTeam === 1) { m.team1Score = winScore; m.team2Score = loseScore; }
+    else { m.team2Score = winScore; m.team1Score = loseScore; }
+    m.winningTeam = m.team1Score === m.team2Score ? null : (m.team1Score > m.team2Score ? 1 : 2);
+    state.awaiting = null;
+    saveCurrent();
+    render();
+  }
+
+  /** Clear a recorded result so it can be entered again. */
+  function setMatchResult(matchId) {
+    const m = state.t.schedule.find((x) => x.id === matchId);
+    if (!m) return;
+    m.team1Score = 0; m.team2Score = 0; m.winningTeam = null;
     saveCurrent();
     render();
   }
@@ -331,6 +348,7 @@
         <div class="card">
           ${settingRow("Rounds", "rounds", t.numberOfRounds, LIMITS.minRounds, LIMITS.maxRounds)}
           <div id="courts-slot">${courtsRow(t, maxCourts)}</div>
+          ${settingRow("Games to", "target", t.pointsTarget, LIMITS.minTarget, LIMITS.maxTarget)}
           <div class="name-row">
             <label for="tname">Name</label>
             <input id="tname" class="name-input" type="text" autocomplete="off" maxlength="40"
@@ -463,20 +481,59 @@
     </div>`;
   }
 
+  function teamName(team) { return esc(team.player1) + " & " + esc(team.player2); }
+
+  /**
+   * Scoring is "tap the team that won", then tap how many the other team got.
+   * Two taps, no modal — it happens courtside, one-handed.
+   */
   function matchView(m) {
-    const w1 = m.winningTeam === 1, w2 = m.winningTeam === 2;
+    const t = state.t;
+    const target = t.pointsTarget || LIMITS.defaultTarget;
+    const decided = m.winningTeam === 1 || m.winningTeam === 2;
+    const awaiting = state.awaiting && state.awaiting.id === m.id ? state.awaiting.team : null;
+    const winner = awaiting || m.winningTeam;
+
+    function row(teamNo) {
+      const team = teamNo === 1 ? m.team1 : m.team2;
+      const isWinner = winner === teamNo;
+      const score = decided ? (teamNo === 1 ? m.team1Score : m.team2Score) : (isWinner && awaiting ? target : null);
+      return `
+      <button class="team-pick ${isWinner ? "won" : ""} ${winner && !isWinner ? "lost" : ""}"
+        data-act="pickWinner" data-id="${m.id}" data-team="${teamNo}"
+        aria-label="${teamName(team)} won">
+        ${isWinner ? `<span class="tp-check">${icon("check")}</span>` : `<span class="tp-dot"></span>`}
+        <span class="tp-names">${teamName(team)}</span>
+        ${score !== null ? `<span class="tp-score">${score}</span>` : ""}
+      </button>`;
+    }
+
+    let strip = "";
+    if (awaiting) {
+      const loserTeam = awaiting === 1 ? m.team2 : m.team1;
+      const chips = [];
+      for (let n = 0; n < target; n++) {
+        chips.push(`<button class="chip" data-act="pickLoserScore" data-id="${m.id}" data-n="${n}">${n}</button>`);
+      }
+      strip = `
+      <div class="score-strip">
+        <div class="strip-q">How many did ${teamName(loserTeam)} get?</div>
+        <div class="chip-row">${chips.join("")}
+          <button class="chip other" data-act="otherScore" data-id="${m.id}">Other…</button>
+        </div>
+      </div>`;
+    } else if (decided) {
+      strip = `<div class="score-strip"><button class="strip-link" data-act="changeScore" data-id="${m.id}">Change score</button></div>`;
+    } else {
+      strip = `<div class="score-strip"><div class="strip-hint">Tap the team that won</div></div>`;
+    }
+
     return `
     <div class="match">
       <div class="court">Court ${m.court}</div>
-      <div class="team-row ${w1 ? "win" : ""}">
-        <span class="names">${esc(m.team1.player1)} & ${esc(m.team1.player2)} ${w1 ? `<span class="check">${icon("check")}</span>` : ""}</span>
-        <button class="score-btn ${w1 ? "win" : ""}" data-act="score" data-id="${m.id}" data-team="1">${m.team1Score}</button>
-      </div>
-      <div class="vs-div">VS</div>
-      <div class="team-row ${w2 ? "win" : ""}">
-        <span class="names">${esc(m.team2.player1)} & ${esc(m.team2.player2)} ${w2 ? `<span class="check">${icon("check")}</span>` : ""}</span>
-        <button class="score-btn ${w2 ? "win" : ""}" data-act="score" data-id="${m.id}" data-team="2">${m.team2Score}</button>
-      </div>
+      ${row(1)}
+      ${row(2)}
+      ${strip}
     </div>`;
   }
 
@@ -486,7 +543,8 @@
     const stats = leaderboardStats();
     const rows = E.sortLeaderboard(stats, state.sort);
     const played = t.schedule.filter((m) => m.winningTeam).length;
-    const sorts = [["name", "Name"], ["score", "Pts"], ["wins", "W"], ["losses", "L"], ["rests", "R"]];
+    // Every option here produces a genuinely different order.
+    const sorts = [["score", "Rank"], ["diff", "Diff"], ["rests", "Sat out"], ["name", "Name"]];
     if (!t.schedule.length || played === 0) {
       return `<div class="scroll">${tabHeader("Standings")}
         <div class="empty-state">${icon("trophy")}<h3>No results yet</h3>
@@ -498,6 +556,11 @@
         ${sorts.map(([k, l]) => `<button class="${state.sort === k ? "active" : ""}" data-act="sort" data-k="${k}">${l}</button>`).join("")}
       </div>
       ${rows.map((s, i) => lbRow(s, i + 1)).join("")}
+      <p class="legend">${state.sort === "score"
+        ? "Ranked by wins, then points difference."
+        : state.sort === "diff" ? "Sorted by points difference — points scored minus points conceded."
+        : state.sort === "rests" ? "Sorted by who has sat out least."
+        : "Sorted by name."}</p>
     </div>`;
   }
 
@@ -511,10 +574,10 @@
       <span class="lb-rank"><span class="rankico">${rankIco}</span><span class="num">${pos}</span></span>
       <span class="lb-name">${esc(s.name)}</span>
       <span class="lb-stats">
-        <span class="stat"><span class="v">${diffStr}</span><span class="l">Pts</span></span>
-        <span class="stat"><span class="v">${s.wins}</span><span class="l">W</span></span>
-        <span class="stat"><span class="v">${s.losses}</span><span class="l">L</span></span>
-        <span class="stat rest"><span class="v">${s.rests}</span><span class="l">R</span></span>
+        <span class="stat"><span class="v">${diffStr}</span><span class="l">Diff</span></span>
+        <span class="stat"><span class="v">${s.wins}</span><span class="l">Won</span></span>
+        <span class="stat"><span class="v">${s.losses}</span><span class="l">Lost</span></span>
+        <span class="stat rest"><span class="v">${s.rests}</span><span class="l">Sat</span></span>
       </span>
     </div>`;
   }
@@ -550,8 +613,8 @@
     for (let i = 0; i <= LIMITS.maxScore; i++) nums.push(i);
     openSheet(`
       <div class="grabber"></div>
-      <h3>Score</h3>
-      <p>${esc(team === 1 ? m.team1.player1 + " & " + m.team1.player2 : m.team2.player1 + " & " + m.team2.player2)}</p>
+      <h3>Their score</h3>
+      <p>How many did ${teamName(team === 1 ? m.team1 : m.team2)} get?</p>
       <div class="num-grid">
         ${nums.map((n) => `<button class="${n === cur ? "sel" : ""}" data-act="pickScore" data-id="${matchId}" data-team="${team}" data-n="${n}">${n}</button>`).join("")}
       </div>`);
@@ -625,9 +688,15 @@
     if (warn) warn.innerHTML = dupes.size ? dupeWarn() : "";
 
     // Courts can't exceed what the group can fill; the control appears and
-    // disappears as the player count crosses a multiple of four.
+    // disappears as the player count crosses a multiple of four. Until someone
+    // sets it deliberately, use every court the group can fill — otherwise
+    // people sit out for no reason.
     const maxCourts = maxCourtsFor(count);
-    if (t.numberOfCourts > maxCourts) t.numberOfCourts = maxCourts;
+    if (t.courtsTouched) {
+      if (t.numberOfCourts > maxCourts) t.numberOfCourts = maxCourts;
+    } else {
+      t.numberOfCourts = maxCourts;
+    }
     const slot = document.getElementById("courts-slot");
     if (slot) {
       const want = courtsRow(t, maxCourts);
@@ -725,7 +794,10 @@
         const delta = act === "stepUp" ? 1 : -1;
         if (node.dataset.key === "rounds") {
           t.numberOfRounds = clamp(t.numberOfRounds + delta, LIMITS.minRounds, LIMITS.maxRounds);
+        } else if (node.dataset.key === "target") {
+          t.pointsTarget = clamp(t.pointsTarget + delta, LIMITS.minTarget, LIMITS.maxTarget);
         } else {
+          t.courtsTouched = true;
           t.numberOfCourts = clamp(t.numberOfCourts + delta, LIMITS.minCourts, maxCourtsFor(nonEmpty(t.players).length));
         }
         saveCurrent(); render(); break;
@@ -751,10 +823,41 @@
         if (state.expanded.has(r)) state.expanded.delete(r); else state.expanded.add(r);
         render(); break;
       }
-      case "score": scoreSheet(node.dataset.id, Number(node.dataset.team)); break;
-      case "pickScore":
-        setMatchScore(node.dataset.id, Number(node.dataset.team), Number(node.dataset.n));
-        closeSheet(); break;
+      case "pickWinner": {
+        // Tapping a team marks it the winner and asks for the other team's
+        // score. Tapping the other team just switches the winner.
+        state.awaiting = { id: node.dataset.id, team: Number(node.dataset.team) };
+        render();
+        break;
+      }
+      case "pickLoserScore": {
+        const a = state.awaiting;
+        if (!a || a.id !== node.dataset.id) break;
+        const loserScore = Number(node.dataset.n);
+        const target = t.pointsTarget || LIMITS.defaultTarget;
+        commitResult(a.id, a.team, target, loserScore);
+        break;
+      }
+      case "otherScore": {
+        // Escape hatch: the winner didn't finish on the target score.
+        const a = state.awaiting;
+        if (!a || a.id !== node.dataset.id) break;
+        scoreSheet(a.id, a.team === 1 ? 2 : 1);
+        break;
+      }
+      case "changeScore":
+        state.awaiting = null;
+        setMatchResult(node.dataset.id, null);
+        break;
+      case "pickScore": {
+        // From the "Other…" grid: the tapped number is the loser's score.
+        const a = state.awaiting;
+        closeSheet();
+        if (a && a.id === node.dataset.id) {
+          commitResult(a.id, a.team, t.pointsTarget || LIMITS.defaultTarget, Number(node.dataset.n));
+        }
+        break;
+      }
       case "addRound": addRound(); break;
       case "sort": state.sort = node.dataset.k; render(); break;
       case "resetApp":
@@ -782,6 +885,7 @@
       if (rec) {
         rec.restingByRound = rec.restingByRound || {};
         rec.pointsPerWin = rec.pointsPerWin || LIMITS.pointsPerWin;
+        rec.pointsTarget = rec.pointsTarget || LIMITS.defaultTarget;
         rec.players = rec.players || ["", "", "", ""];
         state.t = rec;
         if (rec.schedule && rec.schedule.length) {

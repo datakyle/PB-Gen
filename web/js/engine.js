@@ -413,7 +413,7 @@
     return stats;
   }
 
-  const SORT_ORDERS = ["name", "score", "wins", "losses", "rests"];
+  const SORT_ORDERS = ["name", "score", "diff", "wins", "losses", "rests"];
 
   function sortLeaderboard(statsMap, sortOrder) {
     const entries = Object.values(statsMap).filter((s) => s.name && s.name.trim() !== "");
@@ -421,6 +421,10 @@
       switch (sortOrder) {
         case "name":
           return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        // Points difference on its own — distinct from "score", which ranks by
+        // wins first and only uses difference to break ties.
+        case "diff":
+          return b.pointDifferential - a.pointDifferential || b.wins - a.wins;
         case "wins":
           return b.wins - a.wins || b.pointDifferential - a.pointDifferential;
         case "losses":
