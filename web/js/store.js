@@ -71,6 +71,16 @@
       try { localStorage.removeItem(KEYS.record(name)); } catch (e) {}
       if (Store.getCurrentName() === name) Store.setCurrentName("");
     },
+    /** Beta features are opt-in and stay on until turned off. */
+    isBeta() {
+      try { return localStorage.getItem("pbgen.beta") === "1"; } catch (e) { return false; }
+    },
+    setBeta(on) {
+      try {
+        if (on) localStorage.setItem("pbgen.beta", "1");
+        else localStorage.removeItem("pbgen.beta");
+      } catch (e) {}
+    },
     resetAll() {
       const list = Store.listTournaments();
       for (const n of list) {

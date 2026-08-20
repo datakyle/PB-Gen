@@ -384,6 +384,77 @@ body.on-start .app-root { background: transparent; }
   font-variant-numeric: tabular-nums; margin-bottom: 3px;
 }
 .plan-body { font-size: 15px; letter-spacing: -0.224px; color: var(--ink-48); line-height: 1.45; }
+.plan-rot {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  margin-top: 11px; padding: 10px 12px; border-radius: var(--r-md);
+  background: rgba(0,102,204,0.07); border: none; cursor: pointer;
+  font-family: var(--font); font-size: 14px; letter-spacing: -0.224px; color: var(--blue);
+  min-height: var(--tap);
+}
+.plan-rot svg { width: 17px; height: 17px; flex: none; }
+.plan-rot.done { background: transparent; color: var(--ink-48); cursor: default; padding-left: 0; min-height: 0; }
+.plan-rot.done svg { color: var(--blue); }
+
+/* ---- beta / advanced ---- */
+.beta-flag {
+  margin-top: 14px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: rgba(255,255,255,0.72);
+}
+button.wordmark-lg { background: none; border: none; padding: 0; cursor: pointer; font-family: var(--font); }
+.beta-pill {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--blue); background: rgba(0,102,204,0.10); border-radius: 4px; padding: 2px 6px; margin-left: 2px;
+}
+.adv-card { border-color: rgba(0,102,204,0.28); }
+.adv-label {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--ink-48); margin: 16px 0 8px;
+}
+.adv-label:first-of-type { margin-top: 4px; }
+.adv-seg { margin-bottom: 8px; }
+.adv-seg button { font-size: 12.5px; }
+.adv-note { font-size: 13.5px; color: var(--ink-48); margin: 0; letter-spacing: -0.08px; }
+.adv-empty { font-size: 14px; color: var(--ink-48); }
+.adv-warn {
+  display: flex; align-items: flex-start; gap: 7px; margin: 16px 0 0;
+  font-size: 13px; color: var(--warn, #a2660a); letter-spacing: -0.08px;
+}
+.adv-warn svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.pair-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.pair-chip {
+  display: inline-flex; align-items: center; gap: 6px; background: var(--field);
+  border-radius: var(--pill); padding: 6px 6px 6px 12px; font-size: 14px; color: var(--ink);
+}
+.pair-x {
+  border: none; background: rgba(0,0,0,0.06); color: var(--ink-48); cursor: pointer;
+  width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+}
+.pair-x svg { width: 12px; height: 12px; }
+.pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.pick-row {
+  width: 100%; text-align: left; background: var(--white); border: 1px solid var(--hairline);
+  border-radius: var(--r-md); padding: 13px 15px; cursor: pointer; font-family: var(--font);
+  font-size: 17px; letter-spacing: -0.374px; color: var(--ink); min-height: var(--tap);
+}
+.pick-row:active { background: var(--canvas); }
+
+/* ---- fairness report ---- */
+.fair-card {
+  background: var(--white); border: 1px solid var(--hairline); border-radius: var(--r-lg);
+  margin-bottom: 12px; overflow: hidden;
+}
+.fair-card.perfect { border-color: rgba(0,102,204,0.35); }
+.fair-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: none;
+  padding: 13px 15px; cursor: pointer; font-family: var(--font); text-align: left; min-height: var(--tap);
+}
+.fair-ico { width: 20px; height: 20px; flex: none; color: var(--ink-48); display: inline-flex; }
+.fair-card.perfect .fair-ico { color: var(--blue); }
+.fair-ico svg { width: 20px; height: 20px; }
+.fair-title { flex: 1; font-size: 15px; font-weight: 600; letter-spacing: -0.224px; color: var(--ink); }
+.fair-head .chev { width: 16px; height: 16px; color: var(--ink-48); flex: none; }
+.fair-list { margin: 0; padding: 0 15px 14px 44px; list-style: disc; }
+.fair-list li { font-size: 14px; letter-spacing: -0.224px; color: var(--ink-48); margin-bottom: 5px; }
 
 /* how-it-works sheet */
 .how-list { display: flex; flex-direction: column; gap: 16px; margin: 4px 0 18px; }

@@ -102,6 +102,105 @@
   }
 
   // ==========================================================================
+  // Perfect schedules (whist tournaments)
+  //
+  // For these group sizes a schedule exists in which every pair partners
+  // exactly once and opposes exactly twice — precisely what an Americano is
+  // reaching for. The tables were constructed offline (cyclic development,
+  // plus a direct search for 9, which admits no cyclic base) and each was
+  // verified against both conditions before being encoded here.
+  //
+  // Encoding: one character per player index in base 36; each group of four
+  // characters is one game, as team1 then team2.
+  // ==========================================================================
+  const WHIST = {
+    5: "14232034314042010312",
+    8: "70132645712430567235416073465201745063127561042376021534",
+    9: "123456780257364801683745045816270367182506241738051328470823154607142635",
+    12: "b01329674a58b1243a785069b2354089617ab346519a7280b45762a08391b568730194a2b6798412a503b78a95230614b890a6341725b9a107452836ba0218563947",
+    13: "14273c865b9a253840976cab364951a870bc475a62b981c0586b73ca9201697c840ba3127a80951cb4238b91a620c5349ca2b7310645a0b3c8421756b1c409532867c2051a64397803162b754a89",
+    16: "f012369b4dc85ae7f12347ac5ed96b08f23458bd60ea7c19f34569ce710b8d2af4567ad0821c9e3bf5678be1932da04cf6789c02a43eb15df789ad13b540c26ef89abe24c651d370f9abc035d762e481fabcd146e8730592fbcde257098416a3fcde03681a9527b4fde014792ba638c5fe01258a3cb749d6",
+    17: "12384fca596d7gbe23495gdb6a7e80cf345a60ec7b8f91dg456b71fd8c9ga2e0567c82ge9da0b3f1678d930faeb1c4g2789ea41gbfc2d50389afb520cgd3e6149abgc631d0e4f725abc0d742e1f5g836bcd1e853f2g60947cde2f964g3071a58def3ga7504182b69efg40b8615293c7afg051c97263a4d8bg0162da8374b5e9c01273eb9485c6fad",
+    20: "j012359f4ech6iad7b8gj12346ag5fdi70be8c9hj23457bh6ge081cf9daij34568ci7hf192dgaeb0j45679d08ig2a3ehbfc1j5678ae190h3b4ficgd2j6789bf2a1i4c5g0dhe3j789acg3b205d6h1eif4j89abdh4c316e7i2f0g5j9abcei5d427f803g1h6jabcdf06e538g914h2i7jbcdeg17f649ha25i308jcdefh28g75aib360419jdefgi39h86b0c47152ajefgh04ai97c1d58263bjfghi15b0a8d2e69374cjghi026c1b9e3f7a485djhi0137d2caf4g8b596eji01248e3dbg5h9c6a7f",
+    21: "12364dcj5i8e7hfa9bkg23475edk6j9f8igbac0h34586fe07kag9jhcbd1i45697gf180bhakidce2j567a8hg291cib0jedf3k678b9ih3a2djc1kfeg40789caji4b3ekd20gfh5189adbkj5c4f0e31hgi629abec0k6d5g1f42ihj73abcfd107e6h2g53jik84bcdge218f7i3h64kj095cdehf329g8j4i750k1a6defig43ah9k5j86102b7efgjh54bia06k97213c8fghki65cjb170a8324d9ghi0j76dkc281b9435eahij1k87e0d392ca546fbijk2098f1e4a3db657gcjk031a9g2f5b4ec768hdk0142bah3g6c5fd879ie01253cbi4h7d6ge98ajf",
+  };
+
+  function whistRounds(v) {
+    const s = WHIST[v];
+    if (!s) return null;
+    const gamesPerRound = Math.floor(v / 4);
+    const stride = gamesPerRound * 4;
+    const rounds = [];
+    for (let i = 0; i < s.length; i += stride) {
+      const games = [];
+      for (let g = 0; g < gamesPerRound; g++) {
+        const o = i + g * 4;
+        games.push([
+          [parseInt(s[o], 36), parseInt(s[o + 1], 36)],
+          [parseInt(s[o + 2], 36), parseInt(s[o + 3], 36)],
+        ]);
+      }
+      rounds.push(games);
+    }
+    return rounds;
+  }
+
+  /** Rounds needed for everyone to partner everyone, or null if impossible. */
+  function roundsForFullRotation(playerCount, courts) {
+    const seats = courts * 4;
+    const playing = Math.min(playerCount, seats - (seats % 4));
+    const inUse = Math.floor(playing / 4);
+    if (inUse < 1) return null;
+    return Math.ceil((playerCount * (playerCount - 1)) / 2 / (2 * inUse));
+  }
+
+  /** What a finished schedule actually delivers. */
+  function analyzeSchedule(players, schedule, restingByRound) {
+    const partner = new Map(), oppose = new Map();
+    const games = {}, rests = {};
+    for (const p of players) { games[p] = 0; rests[p] = 0; }
+    const roundSet = new Set();
+    for (const m of schedule) {
+      roundSet.add(m.round);
+      const t1 = [m.team1.player1, m.team1.player2];
+      const t2 = [m.team2.player1, m.team2.player2];
+      const k1 = pairKey(t1[0], t1[1]), k2 = pairKey(t2[0], t2[1]);
+      partner.set(k1, (partner.get(k1) || 0) + 1);
+      partner.set(k2, (partner.get(k2) || 0) + 1);
+      for (const a of t1) for (const b of t2) {
+        const k = pairKey(a, b);
+        oppose.set(k, (oppose.get(k) || 0) + 1);
+      }
+      for (const p of [...t1, ...t2]) if (games[p] !== undefined) games[p]++;
+    }
+    if (restingByRound) {
+      for (const r of Object.keys(restingByRound)) {
+        for (const p of restingByRound[r]) if (rests[p] !== undefined) rests[p]++;
+      }
+    }
+    const n = players.length;
+    const totalPairs = (n * (n - 1)) / 2;
+    const pv = [...partner.values()], ov = [...oppose.values()];
+    const gv = Object.values(games), rv = Object.values(rests);
+    return {
+      rounds: roundSet.size,
+      totalPairs,
+      partnered: partner.size,
+      partnerCoverage: totalPairs ? partner.size / totalPairs : 0,
+      partnerMax: pv.length ? Math.max(...pv) : 0,
+      opponentMax: ov.length ? Math.max(...ov) : 0,
+      opponentMin: ov.length ? Math.min(...ov) : 0,
+      gamesMin: gv.length ? Math.min(...gv) : 0,
+      gamesMax: gv.length ? Math.max(...gv) : 0,
+      gamesSpread: gv.length ? Math.max(...gv) - Math.min(...gv) : 0,
+      restSpread: rv.length ? Math.max(...rv) - Math.min(...rv) : 0,
+      restMax: rv.length ? Math.max(...rv) : 0,
+      // A complete rotation: everyone partnered everyone, nobody twice.
+      perfectRotation: partner.size === totalPairs && pv.every((c) => c === 1),
+    };
+  }
+
+  // ==========================================================================
   // AmericanoScheduler
   //
   // Each round is chosen by scoring whole arrangements rather than by walking
@@ -122,6 +221,7 @@
   const W_OPPONENT = 6;
   const W_RECENT = 40;
   const RESTARTS = 8;
+  const AVOID_COST = 1e7;   // effectively a ban, without making rounds impossible
 
 
   class AmericanoScheduler {
@@ -139,6 +239,11 @@
       this.wOpponent = o.wOpponent != null ? o.wOpponent : W_OPPONENT;
       this.wRecent = o.wRecent != null ? o.wRecent : W_RECENT;
       this.restarts = o.restarts != null ? o.restarts : RESTARTS;
+
+      // Advanced constraints. Locked pairs always partner when both are on;
+      // avoided pairs never partner unless there is no legal alternative.
+      this.lockedPairs = (o.lockedPairs || []).map(([a, b]) => pairKey(a, b));
+      this.avoidSet = new Set((o.avoidPairs || []).map(([a, b]) => pairKey(a, b)));
 
       // Partnerships and oppositions are counted separately: they answer
       // different questions and conflating them made the chooser treat a
@@ -174,6 +279,9 @@
     /** What it costs for these two to partner again. */
     _partnerCost(a, b) {
       const k = pairKey(a, b);
+      // Priced rather than forbidden, so a round is always possible even if
+      // the constraints cannot all be honoured at once.
+      if (this.avoidSet.has(k)) return AVOID_COST;
       let c = this.wPartner * this._pc(k) ** 2;
       if (this.lastRoundPartners.has(k)) c += this.wRecent;
       return c;
@@ -203,6 +311,19 @@
       const order = shuffleWith(pool, () => this._rand());
       const used = new Set();
       const teams = [];
+
+      // Locked pairs are seated first so the rest is matched around them.
+      if (this.lockedPairs.length) {
+        const inPool = new Set(pool);
+        for (const k of this.lockedPairs) {
+          const [a, b] = k.split("|");
+          if (inPool.has(a) && inPool.has(b) && !used.has(a) && !used.has(b)) {
+            used.add(a); used.add(b);
+            teams.push([a, b]);
+          }
+        }
+      }
+
       for (const p of order) {
         if (used.has(p)) continue;
         used.add(p);
@@ -218,6 +339,7 @@
         teams.push([p, pick]);
       }
 
+      const locked = new Set(this.lockedPairs);
       let improved = true;
       let passes = 0;
       while (improved && passes++ < 20) {
@@ -226,6 +348,8 @@
           for (let j = i + 1; j < teams.length; j++) {
             const [a, b] = teams[i];
             const [c, d] = teams[j];
+            // never pull apart a pair the organiser locked together
+            if (locked.has(pairKey(a, b)) || locked.has(pairKey(c, d))) continue;
             const cur = this._partnerCost(a, b) + this._partnerCost(c, d);
             const alt1 = this._partnerCost(a, c) + this._partnerCost(b, d);
             const alt2 = this._partnerCost(a, d) + this._partnerCost(b, c);
@@ -341,6 +465,48 @@
       };
     }
 
+    /**
+     * The perfect table for this group, if one applies. It requires every
+     * game of a round to run at once, so it only fits when the group has
+     * enough courts; otherwise the search takes over.
+     */
+    _whistPlan() {
+      const v = this.players.length;
+      const rounds = whistRounds(v);
+      if (!rounds) return null;
+      if (this._courtsInUse() !== Math.floor(v / 4)) return null;
+      // A fixed table cannot honour locked or avoided pairs, and a custom
+      // mixing preference is a request the table cannot answer either.
+      if (this.lockedPairs.length || this.avoidSet.size) return null;
+      if (this.wPartner !== W_PARTNER || this.wOpponent !== W_OPPONENT) return null;
+      const seat = shuffleWith(this.players, () => this._rand());
+      return rounds.map((games) =>
+        games.map(([t1, t2]) => ({
+          team1: [seat[t1[0]], seat[t1[1]]],
+          team2: [seat[t2[0]], seat[t2[1]]],
+        }))
+      );
+    }
+
+    _roundFromPlan(games, round) {
+      const playing = new Set();
+      const matches = [];
+      const partnersThisRound = new Set();
+      games.forEach((g, i) => {
+        for (const p of [...g.team1, ...g.team2]) playing.add(p);
+        matches.push(this._commit(g, round, i + 1));
+        partnersThisRound.add(pairKey(g.team1[0], g.team1[1]));
+        partnersThisRound.add(pairKey(g.team2[0], g.team2[1]));
+      });
+      const resting = this.players.filter((p) => !playing.has(p));
+      for (const p of resting) {
+        this.restCount[p] += 1;
+        this.lastRestRound[p] = round;
+      }
+      this.lastRoundPartners = partnersThisRound;
+      return { matches, resting };
+    }
+
     _generateRound(round) {
       const courts = this._courtsInUse();
       const playing = courts * 4;
@@ -380,8 +546,17 @@
         this.lastRestRound[p] = -1;
       }
 
+      // Use the perfect table where one exists, and let the search carry on
+      // past the end of it if more rounds were asked for.
+      const plan = this._whistPlan();
+      this.usedPerfectTable = false;
+
       for (let round = 0; round < this.numberOfRounds; round++) {
-        const { matches, resting } = this._generateRound(round);
+        const fromPlan = plan && round < plan.length;
+        const { matches, resting } = fromPlan
+          ? this._roundFromPlan(plan[round], round)
+          : this._generateRound(round);
+        if (fromPlan) this.usedPerfectTable = true;
         schedule = schedule.concat(matches);
         this.restingPlayersByRound[round] = resting;
       }
@@ -546,6 +721,9 @@
     SORT_ORDERS,
     makeSeed,
     uuid,
-    _internals: { pairKey, uniqueNonEmpty, sortByPredicate },
+    analyzeSchedule,
+    roundsForFullRotation,
+    hasPerfectTable: (n) => !!WHIST[n],
+    _internals: { pairKey, uniqueNonEmpty, sortByPredicate, whistRounds },
   };
 });

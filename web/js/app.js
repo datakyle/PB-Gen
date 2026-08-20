@@ -15,7 +15,9 @@
   const toastEl = document.getElementById("toast");
 
   const LIMITS = {
-    minPlayers: 4, minRounds: 1, maxRounds: 10, minCourts: 1, maxCourts: 5,
+    // Rounds go well past 10: a complete rotation needs 15 rounds at 16
+    // players, 19 at 20, so the old cap made that unreachable.
+    minPlayers: 4, minRounds: 1, maxRounds: 30, minCourts: 1, maxCourts: 5,
     pointsPerWin: 1, maxScore: 30,
     minTarget: 7, maxTarget: 21, defaultTarget: 11,
   };
@@ -93,6 +95,18 @@
     addingRound: false,
     addRoundError: null,
     editing: null, // match id whose score wheels are open
+    fairnessOpen: false,
+    pairPick: null,
+  };
+
+  let betaTaps = 0;
+  let betaTapAt = 0;
+
+  // Mixing presets map onto the scheduler's cost weights.
+  const MIXES = {
+    balanced: { label: "Balanced", wPartner: 100, wOpponent: 6 },
+    partners: { label: "New partners", wPartner: 100, wOpponent: 0 },
+    opponents: { label: "New opponents", wPartner: 20, wOpponent: 40 },
   };
 
   // ------------------------------------------------------------- tournament
@@ -178,11 +192,25 @@
     };
   }
 
+  /** Scheduler options from the tournament's advanced settings, if any. */
+  function schedulerOptions(t) {
+    if (!Store.isBeta()) return undefined;
+    const mix = MIXES[t.mix || "balanced"];
+    const opts = {};
+    if (t.mix && t.mix !== "balanced") {
+      opts.wPartner = mix.wPartner;
+      opts.wOpponent = mix.wOpponent;
+    }
+    if (t.lockedPairs && t.lockedPairs.length) opts.lockedPairs = t.lockedPairs;
+    if (t.avoidPairs && t.avoidPairs.length) opts.avoidPairs = t.avoidPairs;
+    return Object.keys(opts).length ? opts : undefined;
+  }
+
   function generateSchedule() {
     const t = state.t;
     const players = nonEmpty(t.players).map((p) => p.trim());
     const seed = E.makeSeed();
-    const scheduler = new E.AmericanoScheduler(players, t.numberOfRounds, t.numberOfCourts, seed);
+    const scheduler = new E.AmericanoScheduler(players, t.numberOfRounds, t.numberOfCourts, seed, schedulerOptions(t));
     const result = scheduler.generateSchedule();
     if (!result) { toast("Could not build a schedule from these players."); return; }
     t.seed = String(seed);
@@ -207,7 +235,7 @@
     state.addRoundError = null;
     render();
     setTimeout(() => {
-      const scheduler = new E.AmericanoScheduler(t.players, t.numberOfRounds, t.numberOfCourts, BigInt(t.seed || E.makeSeed()));
+      const scheduler = new E.AmericanoScheduler(t.players, t.numberOfRounds, t.numberOfCourts, BigInt(t.seed || E.makeSeed()), schedulerOptions(t));
       const res = scheduler.generateAdditionalRound(t.schedule.slice());
       if (!res) {
         state.addRoundError = "Can't add another round — every fair pairing has been used.";
@@ -302,7 +330,8 @@
 
       <div class="start-brand">
         <span class="brand-glyph">${icon("pball")}</span>
-        <div class="wordmark-lg">PB GEN</div>
+        <button class="wordmark-lg" data-act="betaTap" aria-label="PB Gen">PB GEN</button>
+        ${Store.isBeta() ? `<span class="beta-flag">Beta features on</span>` : ""}
         <div class="hero-tagline">Everyone rotates partners.<br>Best individual record wins.</div>
       </div>
 
@@ -399,7 +428,9 @@
           </div>
         </div>
 
-        <div id="plan-box">${p ? planBox(p) : ""}</div>
+        <div id="plan-box">${p ? planBox(t) : ""}</div>
+
+        ${Store.isBeta() ? advancedCard(t) : ""}
 
         <button class="btn btn-primary" id="generate-btn" data-act="generate" ${ready ? "" : "disabled"}>
           ${editing ? "Rebuild schedule" : "Generate schedule"}
@@ -416,10 +447,63 @@
       : "";
   }
 
-  function planBox(p) {
+  function planBox(t) {
+    const p = plan(t);
+    if (!p) return "";
+    const count = nonEmpty(t.players).length;
+    const need = E.roundsForFullRotation(count, t.numberOfCourts);
+    let rotation = "";
+    if (need != null) {
+      if (t.numberOfRounds >= need) {
+        rotation = `<div class="plan-rot done">${icon("check")} Everyone partners everyone.</div>`;
+      } else {
+        rotation = `<button class="plan-rot" data-act="setRounds" data-n="${need}">
+            ${icon("info")} <span><b>${need} rounds</b> for everyone to partner everyone — tap to set</span>
+          </button>`;
+      }
+    }
     return `<div class="plan">
       <div class="plan-head">${esc(p.head)}</div>
       <div class="plan-body">${esc(p.body)}</div>
+      ${rotation}
+    </div>`;
+  }
+
+  // ------------------------------------------------------- advanced (beta)
+  function advancedCard(t) {
+    const mix = t.mix || "balanced";
+    const locked = t.lockedPairs || [];
+    const avoid = t.avoidPairs || [];
+    const pairRow = (pairs, kind) => pairs.map((pr, i) => `
+      <span class="pair-chip">
+        ${esc(pr[0])} ${kind === "locked" ? "+" : "×"} ${esc(pr[1])}
+        <button class="pair-x" data-act="removePair" data-kind="${kind}" data-i="${i}" aria-label="Remove">${icon("x")}</button>
+      </span>`).join("");
+
+    return `
+    <div class="card adv-card">
+      <h3 class="card-title"><span class="ico">${icon("gear")}</span> Advanced <span class="beta-pill">Beta</span></h3>
+
+      <div class="adv-label">Mixing priority</div>
+      <div class="segmented adv-seg">
+        ${Object.keys(MIXES).map((k) => `
+          <button class="${mix === k ? "active" : ""}" data-act="setMix" data-k="${k}">${MIXES[k].label}</button>`).join("")}
+      </div>
+      <p class="adv-note">${
+        mix === "balanced" ? "Spreads partners and opponents together. Recommended."
+        : mix === "partners" ? "Chases new partners hardest; opponents may repeat more."
+        : "Spreads opponents evenly; some partnerships may repeat sooner."}</p>
+
+      <div class="adv-label">Keep together</div>
+      <div class="pair-list">${locked.length ? pairRow(locked, "locked") : `<span class="adv-empty">No fixed pairs</span>`}</div>
+      <button class="link-btn" data-act="addPair" data-kind="locked">${icon("plus")} Add fixed pair</button>
+
+      <div class="adv-label">Keep apart</div>
+      <div class="pair-list">${avoid.length ? pairRow(avoid, "avoid") : `<span class="adv-empty">No one kept apart</span>`}</div>
+      <button class="link-btn" data-act="addPair" data-kind="avoid">${icon("plus")} Add pair to separate</button>
+
+      ${(locked.length || mix !== "balanced")
+        ? `<p class="adv-warn">${icon("warn")} These override the perfect rotation, so some pairings will repeat.</p>` : ""}
     </div>`;
   }
 
@@ -487,12 +571,50 @@
     for (let r = 0; r < t.numberOfRounds; r++) rounds.push(r);
     return `<div class="scroll">
       ${tabHeader("Play")}
+      ${fairnessCard(t)}
       ${rounds.map((r) => roundCard(r)).join("")}
       <div style="height:6px"></div>
       <button class="btn btn-secondary" data-act="addRound" ${state.addingRound ? "disabled" : ""}>
         ${state.addingRound ? `${icon("spinner", "spin")} Adding round…` : `${icon("plus")} Add round`}
       </button>
       ${state.addRoundError ? `<div class="add-round-err">${esc(state.addRoundError)}</div>` : ""}
+    </div>`;
+  }
+
+  /**
+   * What this schedule actually delivers. The app used to assert fairness
+   * without ever showing it; this states it in the schedule's own terms.
+   */
+  function fairnessCard(t) {
+    const a = E.analyzeSchedule(t.players, t.schedule, t.restingByRound);
+    const open = state.fairnessOpen;
+    const headline = a.perfectRotation
+      ? "Everyone partners everyone, exactly once"
+      : `${Math.round(a.partnerCoverage * 100)}% of possible partnerships`;
+
+    const facts = [
+      a.perfectRotation
+        ? `Nobody partners the same person twice.`
+        : `Most repeated partnership: ${a.partnerMax}×.`,
+      a.opponentMax === a.opponentMin
+        ? `Everyone faces everyone else exactly ${a.opponentMax}×.`
+        : `Nobody faces the same player more than ${a.opponentMax}×.`,
+      a.gamesSpread === 0
+        ? `Everyone plays ${a.gamesMax} games.`
+        : `Games played: ${a.gamesMin}–${a.gamesMax}.`,
+      a.restMax === 0
+        ? `Nobody sits out.`
+        : (a.restSpread === 0 ? `Everyone sits out ${a.restMax}×.` : `Sit-outs differ by at most ${a.restSpread}.`),
+    ];
+
+    return `
+    <div class="fair-card ${a.perfectRotation ? "perfect" : ""}">
+      <button class="fair-head" data-act="toggleFairness" aria-expanded="${open}">
+        <span class="fair-ico">${a.perfectRotation ? icon("check") : icon("chart")}</span>
+        <span class="fair-title">${headline}</span>
+        <span class="chev">${icon("chevd")}</span>
+      </button>
+      ${open ? `<ul class="fair-list">${facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
     </div>`;
   }
 
@@ -678,6 +800,33 @@
       </div>`);
   }
 
+  /**
+   * Two-step player picker for a fixed or separated pair. The half-made
+   * selection lives in state, not in a data attribute — names can contain
+   * anything, including spaces.
+   */
+  function pairPickerSheet(kind, chosen) {
+    state.pairPick = { kind, chosen };
+    const t = state.t;
+    const names = nonEmpty(t.players).map((p) => p.trim());
+    const taken = new Set(chosen);
+    const title = kind === "locked" ? "Keep together" : "Keep apart";
+    const step = chosen.length === 0
+      ? (kind === "locked" ? "Who is the first of the pair?" : "Who is the first player?")
+      : `Now pick who to ${kind === "locked" ? "partner with" : "keep away from"} ${esc(chosen[0])}`;
+    openSheet(`
+      <div class="grabber"></div>
+      <h3>${title}</h3>
+      <p>${step}</p>
+      <div class="pick-list">
+        ${names.filter((n) => !taken.has(n)).map((n) => `
+          <button class="pick-row" data-act="pickPairPlayer" data-name="${esc(n)}">${esc(n)}</button>`).join("")}
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" data-act="closeSheet">Cancel</button>
+      </div>`);
+  }
+
   function tournamentMenuSheet() {
     openSheet(`
       <div class="grabber"></div>
@@ -835,8 +984,9 @@
 
     const planEl = document.getElementById("plan-box");
     if (planEl) {
-      const p = plan(t);
-      planEl.innerHTML = p ? planBox(p) : "";
+      planEl.innerHTML = planBox(t);
+      // the rotation hint is a button, so it needs wiring after replacement
+      planEl.querySelectorAll("[data-act]").forEach((n) => n.addEventListener("click", onAction));
     }
     const gen = document.getElementById("generate-btn");
     if (gen) gen.disabled = !canGenerate(t);
@@ -855,6 +1005,21 @@
         newTournament();
         break;
       case "howItWorks": closeSheet(); howSheet(); break;
+      case "betaTap": {
+        // Five taps on the wordmark unlocks the in-progress advanced controls.
+        const now = Date.now();
+        if (now - betaTapAt > 1500) betaTaps = 0;
+        betaTapAt = now;
+        betaTaps += 1;
+        if (betaTaps >= 5) {
+          betaTaps = 0;
+          const on = !Store.isBeta();
+          Store.setBeta(on);
+          toast(on ? "Beta features on — Advanced appears in setup." : "Beta features off.");
+          render();
+        }
+        break;
+      }
       case "goSaved":
         closeSheet();
         if (t) saveCurrent();
@@ -927,6 +1092,35 @@
           t.courtsTouched = true;
           t.numberOfCourts = clamp(t.numberOfCourts + delta, LIMITS.minCourts, maxCourtsFor(nonEmpty(t.players).length));
         }
+        saveCurrent(); render(); break;
+      }
+      case "toggleFairness":
+        state.fairnessOpen = !state.fairnessOpen;
+        render(); break;
+      case "setRounds":
+        t.numberOfRounds = clamp(Number(node.dataset.n), LIMITS.minRounds, LIMITS.maxRounds);
+        saveCurrent(); render(); break;
+      case "setMix":
+        t.mix = node.dataset.k;
+        saveCurrent(); render(); break;
+      case "addPair":
+        pairPickerSheet(node.dataset.kind, []);
+        break;
+      case "pickPairPlayer": {
+        const pick = state.pairPick;
+        if (!pick) break;
+        const kind = pick.kind;
+        const chosen = pick.chosen.concat(node.dataset.name);
+        if (chosen.length < 2) { pairPickerSheet(kind, chosen); break; }
+        state.pairPick = null;
+        const list = kind === "locked" ? (t.lockedPairs = t.lockedPairs || []) : (t.avoidPairs = t.avoidPairs || []);
+        const exists = list.some((p) => p.includes(chosen[0]) && p.includes(chosen[1]));
+        if (!exists) list.push([chosen[0], chosen[1]]);
+        closeSheet(); saveCurrent(); render(); break;
+      }
+      case "removePair": {
+        const list = node.dataset.kind === "locked" ? t.lockedPairs : t.avoidPairs;
+        if (list) list.splice(Number(node.dataset.i), 1);
         saveCurrent(); render(); break;
       }
       case "generate":
