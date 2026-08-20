@@ -18,6 +18,7 @@ struct TournamentDetailsView: View {
     let onViewSavedTournaments: () -> Void
     let onAppReset: () -> Void
     let onTournamentSelection: () -> Void
+    let onCleanupLeaderboard: () -> Void
     
     // MARK: - State
     @FocusState private var focusedField: Int?
@@ -25,7 +26,7 @@ struct TournamentDetailsView: View {
     @State private var showResetConfirmation: Bool = false
     @State private var showResetWarning: Bool = false
     @State private var showInsufficientPlayersAlert: Bool = false
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.Spacing.lg) {
@@ -43,6 +44,10 @@ struct TournamentDetailsView: View {
                 generateScheduleCard
                 tournamentManagementCard
                 dangerZoneCard
+                
+                // Bottom padding to account for floating tab bar
+                Spacer()
+                    .frame(height: 100)
             }
             .padding(Theme.Spacing.md)
         }
@@ -200,25 +205,81 @@ struct TournamentDetailsView: View {
                 Spacer()
             }
             
-            VStack(spacing: Theme.Spacing.sm) {
+            VStack(spacing: Theme.Spacing.md) {
+                // Rounds Setting
                 HStack {
                     Text("Rounds:")
                         .font(Theme.Typography.body)
+                        .foregroundColor(.primary)
+                    
                     Spacer()
-                    Stepper("\(viewModel.numberOfRounds)", 
-                           value: $viewModel.numberOfRounds, 
-                           in: AppConstants.Tournament.minimumRounds...AppConstants.Tournament.maximumRounds)
-                    .labelsHidden()
+                    
+                    HStack(spacing: Theme.Spacing.sm) {
+                        Button(action: {
+                            if viewModel.numberOfRounds > AppConstants.Tournament.minimumRounds {
+                                viewModel.numberOfRounds -= 1
+                            }
+                        }) {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(viewModel.numberOfRounds > AppConstants.Tournament.minimumRounds ? .black : .gray)
+                        }
+                        .disabled(viewModel.numberOfRounds <= AppConstants.Tournament.minimumRounds)
+                        
+                        Text("\(viewModel.numberOfRounds)")
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .foregroundColor(.black)
+                            .frame(minWidth: 30)
+                        
+                        Button(action: {
+                            if viewModel.numberOfRounds < AppConstants.Tournament.maximumRounds {
+                                viewModel.numberOfRounds += 1
+                            }
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(viewModel.numberOfRounds < AppConstants.Tournament.maximumRounds ? .black : .gray)
+                        }
+                        .disabled(viewModel.numberOfRounds >= AppConstants.Tournament.maximumRounds)
+                    }
                 }
                 
+                // Courts Setting
                 HStack {
                     Text("Courts:")
                         .font(Theme.Typography.body)
+                        .foregroundColor(.primary)
+                    
                     Spacer()
-                    Stepper("\(viewModel.numberOfCourts)", 
-                           value: $viewModel.numberOfCourts, 
-                           in: AppConstants.Tournament.minimumCourts...AppConstants.Tournament.maximumCourts)
-                    .labelsHidden()
+                    
+                    HStack(spacing: Theme.Spacing.sm) {
+                        Button(action: {
+                            if viewModel.numberOfCourts > AppConstants.Tournament.minimumCourts {
+                                viewModel.numberOfCourts -= 1
+                            }
+                        }) {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(viewModel.numberOfCourts > AppConstants.Tournament.minimumCourts ? .black : .gray)
+                        }
+                        .disabled(viewModel.numberOfCourts <= AppConstants.Tournament.minimumCourts)
+                        
+                        Text("\(viewModel.numberOfCourts)")
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .foregroundColor(.black)
+                            .frame(minWidth: 30)
+                        
+                        Button(action: {
+                            if viewModel.numberOfCourts < AppConstants.Tournament.maximumCourts {
+                                viewModel.numberOfCourts += 1
+                            }
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(viewModel.numberOfCourts < AppConstants.Tournament.maximumCourts ? .black : .gray)
+                        }
+                        .disabled(viewModel.numberOfCourts >= AppConstants.Tournament.maximumCourts)
+                    }
                 }
             }
         }
@@ -357,7 +418,8 @@ struct TournamentDetailsView: View {
             onNewTournament: {},
             onViewSavedTournaments: {},
             onAppReset: {},
-            onTournamentSelection: {}
+            onTournamentSelection: {},
+            onCleanupLeaderboard: {}
         )
     }
 }

@@ -13,39 +13,54 @@ struct TabHeaderView: View {
     let onTournamentSelection: () -> Void
     
     var body: some View {
-        VStack(spacing: Theme.Spacing.sm) {
+        HStack(alignment: .center, spacing: Theme.Spacing.md) {
+            // Tab name on the left
             Text(tabName.uppercased())
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundColor(.black)
                 .tracking(2)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             
+            // Tournament selector on the right
             if !tournamentName.isEmpty {
                 Button(action: onTournamentSelection) {
-                    HStack {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        // Tournament icon
+                        Image(systemName: "trophy.circle.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.orange)
+                        
+                        // Tournament name
                         Text(tournamentName.uppercased())
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
                             .foregroundColor(.black)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         
-                        Spacer()
-                        
-                        Image(systemName: "chevron.down")
-                            .foregroundColor(.black)
-                            .imageScale(.medium)
+                        // Dropdown indicator
+                        Image(systemName: "chevron.down.circle.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.black.opacity(0.6))
                     }
                     .padding(.horizontal, Theme.Spacing.md)
                     .padding(.vertical, Theme.Spacing.sm)
                     .background(
-                        RoundedRectangle(cornerRadius: Theme.Layout.cornerRadius)
-                            .fill(Color.white.opacity(0.8))
+                        RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius)
+                            .fill(.ultraThinMaterial)
                             .overlay(
-                                RoundedRectangle(cornerRadius: Theme.Layout.cornerRadius)
-                                    .stroke(Color.black.opacity(0.2), lineWidth: 1)
+                                RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius)
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
                             )
+                            .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
             }
         }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.lg)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -54,11 +69,25 @@ struct TabHeaderView: View {
         Theme.Gradients.mainBackground
             .ignoresSafeArea()
         
-        TabHeaderView(
-            tabName: "SCHEDULE",
-            tournamentName: "Summer Tournament",
-            onTournamentSelection: {}
-        )
+        VStack(spacing: 40) {
+            TabHeaderView(
+                tabName: "SCHEDULE",
+                tournamentName: "Summer Championship Tournament",
+                onTournamentSelection: {}
+            )
+            
+            TabHeaderView(
+                tabName: "LEADERBOARD", 
+                tournamentName: "Test",
+                onTournamentSelection: {}
+            )
+            
+            TabHeaderView(
+                tabName: "DETAILS",
+                tournamentName: "Winter Tournament Series 2024",
+                onTournamentSelection: {}
+            )
+        }
         .padding()
     }
 }

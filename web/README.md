@@ -1,5 +1,7 @@
 # PB Gen — Web
 
+**Live app: <https://datakyle.github.io/PB-Gen/>**
+
 A web version of the **PB Gen** iOS app: an Americano-style pickleball doubles
 tournament generator. It creates fair, balanced schedules where players rotate
 partners and opponents, tracks scores, and ranks everyone on a live leaderboard.

@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+._*
+
+# Xcode — build output
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode — per-user state (not shared)
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# CocoaPods / Carthage (unused today, ignored for safety)
+Pods/
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/screenshots/**/*.png
+
+# Node (the web app is dependency-free, but keep local tooling out)
+node_modules/
+npm-debug.log*
+
+# Editor / local scratch
+.vscode/
+.idea/
+*.swp
