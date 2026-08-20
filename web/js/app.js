@@ -1,7 +1,9 @@
 /*
  * app.js — PB Gen web UI controller (vanilla JS, no build step).
- * Renders the Create / Saved / Details / Schedule / Leaderboard screens and
- * wires them to the engine + localStorage store.
+ *
+ * Screens: Start → Setup → Play / Standings.
+ * Setup is a step you pass through once, not a permanent tab, so the two
+ * things you use during a session (Play, Standings) are the only tabs.
  */
 (function () {
   "use strict";
@@ -13,6 +15,7 @@
   const toastEl = document.getElementById("toast");
 
   const LIMITS = { minPlayers: 4, minRounds: 1, maxRounds: 10, minCourts: 1, maxCourts: 5, pointsPerWin: 1, maxScore: 30 };
+  const MINUTES_PER_ROUND = 12; // rough, for the plan estimate
 
   // ------------------------------------------------------------------ icons
   const P = {
@@ -38,9 +41,10 @@
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     dropdown: '<circle cx="12" cy="12" r="9"/><path d="M8.5 11l3.5 3 3.5-3"/>',
     spinner: '<path d="M12 3a9 9 0 1 0 9 9" fill="none"/>',
-    list: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/>',
     chart: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
+    pencil: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
     pball: '<circle cx="12" cy="12" r="9"/><circle cx="9.5" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="16.5" r="1.1" fill="currentColor" stroke="none"/>',
   };
   function icon(name, cls) {
@@ -57,7 +61,7 @@
     toastEl.textContent = msg;
     toastEl.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toastEl.hidden = true), 2200);
+    toastTimer = setTimeout(() => (toastEl.hidden = true), 2400);
   }
   function closeSheet() { sheetHost.hidden = true; sheetHost.innerHTML = ""; }
   function openSheet(html) {
@@ -76,18 +80,17 @@
 
   // ------------------------------------------------------------------ state
   const state = {
-    view: "create", // create | saved | main
-    tab: 0,
-    draft: { type: "americano", name: "" },
-    t: null, // current tournament record
-    editingPlayers: false,
+    view: "start", // start | saved | setup | main
+    tab: 0,        // 0 = Play, 1 = Standings
+    t: null,       // current tournament record
+    editingSaved: false,
     expanded: new Set(),
     sort: "score",
     addingRound: false,
     addRoundError: null,
   };
 
-  // --------------------------------------------------------- tournament ops
+  // ------------------------------------------------------------- tournament
   function nonEmpty(players) { return players.filter((p) => p.trim() !== ""); }
   function duplicates(players) {
     const seen = {}, dup = new Set();
@@ -101,6 +104,21 @@
   function canGenerate(t) {
     return nonEmpty(t.players).length >= LIMITS.minPlayers && duplicates(t.players).size === 0;
   }
+  // A court needs 4 players, so offering more courts than the group can fill
+  // would be a control that does nothing.
+  function maxCourtsFor(playerCount) {
+    return Math.max(1, Math.min(LIMITS.maxCourts, Math.floor(playerCount / 4)));
+  }
+
+  function defaultName() {
+    const day = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
+    let base = day + " Session";
+    if (!Store.exists(base)) return base;
+    for (let i = 2; i < 100; i++) {
+      if (!Store.exists(base + " " + i)) return base + " " + i;
+    }
+    return base;
+  }
 
   function saveCurrent() {
     if (!state.t) return;
@@ -108,28 +126,49 @@
     Store.setCurrentName(state.t.name);
   }
 
-  function startTournament() {
-    const name = state.draft.name.trim();
-    if (!name) return;
-    if (Store.exists(name)) {
-      const rec = Store.load(name);
-      if (rec) { state.t = rec; Store.setCurrentName(name); state.view = "main"; state.tab = 0; render(); return; }
-    }
+  function newTournament() {
     state.t = {
-      name,
-      type: state.draft.type,
+      name: defaultName(),
       players: ["", "", "", ""],
-      numberOfRounds: 3,
+      numberOfRounds: 5,
       numberOfCourts: 1,
       pointsPerWin: LIMITS.pointsPerWin,
       seed: null,
       schedule: [],
       restingByRound: {},
     };
-    saveCurrent();
-    state.view = "main";
-    state.tab = 0;
+    state.view = "setup";
     render();
+  }
+
+  /** Plain-English description of what the current settings will produce. */
+  function plan(t) {
+    const n = nonEmpty(t.players).length;
+    if (n < LIMITS.minPlayers) return null;
+    const seats = t.numberOfCourts * 4;
+    const playing = Math.min(n, seats - (seats % 4));
+    const courtsUsed = Math.floor(playing / 4);
+    const sittingOut = n - playing;
+    const r = t.numberOfRounds;
+
+    const slots = r * playing;
+    const base = Math.floor(slots / n);
+    const rem = slots % n;
+
+    let games;
+    if (sittingOut === 0) games = `Everyone plays all ${r} ${r === 1 ? "game" : "games"}.`;
+    else if (rem === 0) games = `Everyone plays ${base} ${base === 1 ? "game" : "games"} and sits out ${r - base}.`;
+    else games = `Everyone plays ${base}–${base + 1} games, taking turns sitting out.`;
+
+    const mins = r * MINUTES_PER_ROUND;
+    const time = mins >= 60
+      ? `${Math.floor(mins / 60)} hr${mins % 60 ? " " + (mins % 60) + " min" : ""}`
+      : `${mins} min`;
+
+    return {
+      head: `${r} ${r === 1 ? "round" : "rounds"} · ${n} players · ${courtsUsed} ${courtsUsed === 1 ? "court" : "courts"}`,
+      body: `${games} About ${time}.`,
+    };
   }
 
   function generateSchedule() {
@@ -138,7 +177,7 @@
     const seed = E.makeSeed();
     const scheduler = new E.AmericanoScheduler(players, t.numberOfRounds, t.numberOfCourts, seed);
     const result = scheduler.generateSchedule();
-    if (!result) { toast("Could not generate a schedule."); return; }
+    if (!result) { toast("Could not build a schedule from these players."); return; }
     t.seed = String(seed);
     t.players = players;
     t.schedule = result.schedule;
@@ -146,10 +185,11 @@
     const producedRounds = new Set(result.schedule.map((m) => m.round)).size;
     state.expanded = new Set([0]);
     saveCurrent();
-    state.tab = 1;
+    state.view = "main";
+    state.tab = 0;
     render();
     if (producedRounds < t.numberOfRounds) {
-      toast(`Generated ${producedRounds} of ${t.numberOfRounds} rounds (limited by players).`);
+      toast(`Built ${producedRounds} of ${t.numberOfRounds} rounds — the rest need more players.`);
     }
   }
 
@@ -159,12 +199,11 @@
     state.addingRound = true;
     state.addRoundError = null;
     render();
-    // Let the spinner paint, then compute.
     setTimeout(() => {
       const scheduler = new E.AmericanoScheduler(t.players, t.numberOfRounds, t.numberOfCourts, BigInt(t.seed || E.makeSeed()));
       const res = scheduler.generateAdditionalRound(t.schedule.slice());
       if (!res) {
-        state.addRoundError = "Unable to generate an additional round. All fair pairings may be exhausted.";
+        state.addRoundError = "Can't add another round — every fair pairing has been used.";
       } else {
         const newRound = res.matches[0].round;
         t.schedule = t.schedule.concat(res.matches);
@@ -195,57 +234,33 @@
 
   // ============================================================ RENDER
   function render() {
-    if (state.view === "create") appEl.innerHTML = viewCreate();
+    if (state.view === "start") appEl.innerHTML = viewStart();
     else if (state.view === "saved") appEl.innerHTML = viewSaved();
+    else if (state.view === "setup") appEl.innerHTML = viewSetup();
     else appEl.innerHTML = viewMain();
     wire();
   }
 
-  // ---------------------------------------------------------- CREATE view
-  function viewCreate() {
-    const canStart = state.draft.name.trim() !== "" && state.draft.type === "americano";
+  // ------------------------------------------------------------ START view
+  function viewStart() {
     const hasSaved = Store.listTournaments().length > 0;
-    const types = [
-      { id: "americano", label: "Americano", on: true },
-      { id: "single", label: "Single Elimination", on: false },
-      { id: "double", label: "Double Elimination", on: false },
-    ];
     return `
-    <div class="screen create">
+    <div class="screen">
       <section class="hero-tile">
-        <button class="icon-circ" data-act="goSaved" ${hasSaved ? "" : "disabled"} aria-label="Saved tournaments">${icon("back")}</button>
         <span class="brand-glyph">${icon("pball")}</span>
         <div class="wordmark-lg">PB GEN</div>
-        <div class="hero-tagline">Americano, perfectly mixed.</div>
+        <div class="hero-tagline">Everyone rotates partners.<br>Best individual record wins.</div>
       </section>
 
-      <div class="create-body">
-        <div>
-          <h2 class="section-q">What would you like to create?</h2>
-          <div class="fmt-list">
-            ${types.map((ty) => `
-              <button class="fmt-opt ${state.draft.type === ty.id ? "selected" : ""} ${ty.on ? "" : "disabled"}"
-                data-act="pickType" data-type="${ty.id}" ${ty.on ? "" : "disabled"}>
-                <span>${ty.label}</span>
-                ${ty.on ? (state.draft.type === ty.id ? `<span class="tick">${icon("check")}</span>` : "") : '<span class="soon">Soon</span>'}
-              </button>`).join("")}
-          </div>
-        </div>
-
-        <div>
-          <label class="input-label" for="tname">Tournament name</label>
-          <input id="tname" class="input-pill" type="text" autocomplete="off" placeholder="e.g. Saturday Social"
-            value="${esc(state.draft.name)}" maxlength="40" />
-        </div>
-
-        <div class="create-cta">
-          <button class="btn btn-primary" data-act="start" ${canStart ? "" : "disabled"}>Start Tournament</button>
-        </div>
+      <div class="start-body">
+        <button class="btn btn-primary" data-act="newTournament">New tournament</button>
+        ${hasSaved ? `<button class="row-link" data-act="goSaved"><span>Saved tournaments</span>${icon("chevr")}</button>` : ""}
+        <button class="row-link" data-act="howItWorks"><span>How Americano works</span>${icon("chevr")}</button>
       </div>
     </div>`;
   }
 
-  // ---------------------------------------------------------- SAVED view
+  // ------------------------------------------------------------ SAVED view
   function viewSaved() {
     const list = Store.listTournaments();
     return `
@@ -253,39 +268,130 @@
       <div class="brand-head-sm">
         <button class="round-icon-btn" data-act="backFromSaved" aria-label="Back">${icon("back")}</button>
         <h1>Saved</h1>
-        <button class="round-icon-btn" data-act="toggleEdit" aria-label="Edit">${state.editingPlayers ? icon("check") : icon("trash")}</button>
+        ${list.length ? `<button class="round-icon-btn" data-act="toggleEdit" aria-label="${state.editingSaved ? "Done" : "Edit"}">${state.editingSaved ? icon("check") : icon("trash")}</button>` : `<span style="width:44px"></span>`}
       </div>
       <div class="scroll no-tabbar">
         ${list.length === 0 ? `
           <div class="empty-state">
             ${icon("folder")}
-            <h3>No Saved Tournaments</h3>
-            <p>Create your first tournament to get started.</p>
+            <h3>Nothing saved yet</h3>
+            <p>Tournaments you create are kept on this device.</p>
           </div>` : `
           <div class="saved-list">
             ${list.map((n) => `
               <div class="saved-item" data-act="loadSaved" data-name="${esc(n)}" role="button" tabindex="0">
                 <span class="trophy">${icon("trophy")}</span>
                 <span class="nm">${esc(n)}</span>
-                ${state.editingPlayers
-                  ? `<button class="icon-btn del" data-act="deleteSaved" data-name="${esc(n)}" aria-label="Delete ${esc(n)}">${icon("minus")}</button>`
+                ${state.editingSaved
+                  ? `<button class="icon-btn danger" data-act="deleteSaved" data-name="${esc(n)}" aria-label="Delete ${esc(n)}">${icon("minus")}</button>`
                   : `<span class="chev">${icon("chevr")}</span>`}
               </div>`).join("")}
           </div>`}
         <div style="margin-top:18px">
-          <button class="btn btn-secondary" data-act="newFromSaved">${icon("plus")} New Tournament</button>
+          <button class="btn btn-secondary" data-act="newTournament">${icon("plus")} New tournament</button>
+        </div>
+        <div class="reset-foot">
+          <button class="chip-btn red" data-act="resetApp">${icon("refresh")} Reset app</button>
+          <p>Deletes every tournament on this device.</p>
         </div>
       </div>
     </div>`;
   }
 
-  // ---------------------------------------------------------- MAIN view
+  // ------------------------------------------------------------ SETUP view
+  function viewSetup() {
+    const t = state.t;
+    const dupes = duplicates(t.players);
+    const count = nonEmpty(t.players).length;
+    const ready = canGenerate(t);
+    const editing = t.schedule.length > 0;
+    const maxCourts = maxCourtsFor(count);
+    const p = plan(t);
+
+    return `
+    <div class="screen">
+      <div class="brand-head-sm">
+        <button class="round-icon-btn" data-act="backFromSetup" aria-label="Back">${icon("back")}</button>
+        <h1>${editing ? "Edit" : "New tournament"}</h1>
+        <span style="width:44px"></span>
+      </div>
+
+      <div class="scroll no-tabbar">
+        <div class="card">
+          <h3 class="card-title"><span class="ico">${icon("people")}</span> Who's playing? <span class="count">(${count})</span></h3>
+          <div id="player-list">
+            ${t.players.map((name, i) => playerRow(name, i, dupes)).join("")}
+          </div>
+          <button class="link-btn" data-act="addPlayer">${icon("personadd")} Add player</button>
+          ${count < LIMITS.minPlayers ? `<p class="hint-line">Americano needs at least 4 players.</p>` : ""}
+        </div>
+
+        <div id="dupe-warn">${dupes.size ? dupeWarn() : ""}</div>
+
+        <div class="card">
+          ${settingRow("Rounds", "rounds", t.numberOfRounds, LIMITS.minRounds, LIMITS.maxRounds)}
+          <div id="courts-slot">${courtsRow(t, maxCourts)}</div>
+          <div class="name-row">
+            <label for="tname">Name</label>
+            <input id="tname" class="name-input" type="text" autocomplete="off" maxlength="40"
+              value="${esc(t.name)}" placeholder="${esc(defaultName())}" />
+          </div>
+        </div>
+
+        <div id="plan-box">${p ? planBox(p) : ""}</div>
+
+        <button class="btn btn-primary" id="generate-btn" data-act="generate" ${ready ? "" : "disabled"}>
+          ${editing ? "Rebuild schedule" : "Generate schedule"}
+        </button>
+        ${editing ? `<p class="hint-line center">Rebuilding creates new matchups and clears any scores.</p>` : ""}
+      </div>
+    </div>`;
+  }
+
+  // Courts only make sense once there are enough players for a second court.
+  function courtsRow(t, maxCourts) {
+    return maxCourts > 1
+      ? settingRow("Courts", "courts", t.numberOfCourts, LIMITS.minCourts, maxCourts)
+      : "";
+  }
+
+  function planBox(p) {
+    return `<div class="plan">
+      <div class="plan-head">${esc(p.head)}</div>
+      <div class="plan-body">${esc(p.body)}</div>
+    </div>`;
+  }
+
+  function playerRow(name, i, dupes) {
+    const isDupe = name.trim() !== "" && dupes.has(name.trim());
+    const canRemove = state.t.players.length > LIMITS.minPlayers;
+    return `
+    <div class="player-row">
+      <span class="idx">${i + 1}</span>
+      <input class="field player-input ${isDupe ? "dupe" : ""}" data-i="${i}" type="text" autocomplete="off"
+        placeholder="Player ${i + 1}" value="${esc(name)}" maxlength="24" />
+      ${canRemove ? `<button class="icon-btn danger" data-act="removePlayer" data-i="${i}" aria-label="Remove player ${i + 1}">${icon("minus")}</button>` : ""}
+    </div>`;
+  }
+  function dupeWarn() {
+    return `<div class="warn-band">${icon("warn")} Two players have the same name — make each one different.</div>`;
+  }
+  function settingRow(label, key, val, min, max) {
+    return `
+    <div class="setting-row">
+      <span class="label">${label}</span>
+      <span class="stepper">
+        <button data-act="stepDown" data-key="${key}" ${val <= min ? "disabled" : ""} aria-label="Fewer ${label.toLowerCase()}">−</button>
+        <span class="val">${val}</span>
+        <button data-act="stepUp" data-key="${key}" ${val >= max ? "disabled" : ""} aria-label="More ${label.toLowerCase()}">+</button>
+      </span>
+    </div>`;
+  }
+
+  // ------------------------------------------------------------- MAIN view
   function viewMain() {
-    let body = "";
-    if (state.tab === 0) body = tabDetails();
-    else if (state.tab === 1) body = tabSchedule();
-    else body = tabLeaderboard();
-    const tabs = [["Details", "list"], ["Schedule", "cal"], ["Leaderboard", "chart"]];
+    const body = state.tab === 0 ? tabPlay() : tabStandings();
+    const tabs = [["Play", "cal"], ["Standings", "chart"]];
     return `
     <div class="screen">
       ${body}
@@ -296,110 +402,34 @@
   }
 
   function tabHeader(title) {
-    const t = state.t;
     return `
     <div class="tab-head">
       <h1>${title}</h1>
-      <button class="tourney-chip" data-act="switchTourney">
-        <span class="dot">${icon("trophy")}</span>
-        <span class="name">${esc(t.name.toUpperCase())}</span>
+      <button class="tourney-chip" data-act="tournamentMenu" aria-label="Tournament options">
+        <span class="name">${esc(state.t.name)}</span>
         ${icon("dropdown")}
       </button>
     </div>`;
   }
 
-  // ---------------------------------------------------------- DETAILS tab
-  function tabDetails() {
-    const t = state.t;
-    const dupes = duplicates(t.players);
-    const validCount = nonEmpty(t.players).length;
-    const gen = canGenerate(t);
-    return `
-    <div class="scroll">
-      ${tabHeader("DETAILS")}
-
-      <div class="card">
-        <h3 class="card-title"><span class="ico">${icon("trophy")}</span> Tournament Info</h3>
-        <div class="info-row"><span class="k">Name</span><span class="v">${esc(t.name)}</span></div>
-        <div class="info-row"><span class="k">Format</span><span class="v">Americano</span></div>
-      </div>
-
-      <div class="card">
-        <h3 class="card-title"><span class="ico">${icon("people")}</span> Players <span class="count">(${validCount})</span></h3>
-        <div id="player-list">
-          ${t.players.map((name, i) => playerRow(name, i, dupes)).join("")}
-        </div>
-        <button class="link-btn" data-act="addPlayer">${icon("personadd")} Add Player</button>
-      </div>
-
-      <div id="dupe-warn">${dupes.size ? dupeWarn() : ""}</div>
-
-      <div class="card">
-        <h3 class="card-title"><span class="ico">${icon("gear")}</span> Game Settings</h3>
-        ${settingRow("Rounds", "rounds", t.numberOfRounds, LIMITS.minRounds, LIMITS.maxRounds)}
-        ${settingRow("Courts", "courts", t.numberOfCourts, LIMITS.minCourts, LIMITS.maxCourts)}
-      </div>
-
-      <button class="btn btn-primary" id="generate-btn" data-act="generate" ${gen ? "" : "disabled"}>
-        ${icon("calplus")} ${t.schedule.length ? "Regenerate Schedule" : "Generate Schedule"}
-      </button>
-      ${t.schedule.length ? `<p style="text-align:center;color:var(--ink-3);font-size:12px;margin:8px 0 0">Regenerating creates a new schedule and clears scores.</p>` : ""}
-
-      <div style="height:14px"></div>
-      <button class="btn btn-secondary" data-act="newTournament">${icon("plus")} Create New Tournament</button>
-      <div style="height:8px"></div>
-      <button class="btn btn-secondary" data-act="goSaved">${icon("folder")} View Saved Tournaments</button>
-
-      <div style="height:14px"></div>
-      <div class="card danger-zone">
-        <h3 class="card-title"><span class="ico">${icon("warn")}</span> Danger Zone</h3>
-        <button class="chip-btn red" data-act="resetApp">${icon("refresh")} Reset App</button>
-      </div>
-    </div>`;
-  }
-
-  function playerRow(name, i, dupes) {
-    const isDupe = name.trim() !== "" && dupes.has(name.trim());
-    const canRemove = state.editingPlayers && state.t.players.length > LIMITS.minPlayers;
-    return `
-    <div class="player-row">
-      <span class="idx">${i + 1}</span>
-      <input class="field player-input ${isDupe ? "dupe" : ""}" data-i="${i}" type="text" autocomplete="off"
-        placeholder="Player ${i + 1}" value="${esc(name)}" maxlength="24" />
-      ${canRemove ? `<button class="icon-btn danger" data-act="removePlayer" data-i="${i}" aria-label="Remove player ${i + 1}">${icon("minus")}</button>` : ""}
-    </div>`;
-  }
-  function dupeWarn() {
-    return `<div class="warn-band">${icon("warn")} Duplicate names detected — make each name unique.</div>`;
-  }
-  function settingRow(label, key, val, min, max) {
-    return `
-    <div class="setting-row">
-      <span class="label">${label}</span>
-      <span class="stepper">
-        <button data-act="stepDown" data-key="${key}" ${val <= min ? "disabled" : ""} aria-label="Decrease ${label}">−</button>
-        <span class="val">${val}</span>
-        <button data-act="stepUp" data-key="${key}" ${val >= max ? "disabled" : ""} aria-label="Increase ${label}">+</button>
-      </span>
-    </div>`;
-  }
-
-  // ---------------------------------------------------------- SCHEDULE tab
-  function tabSchedule() {
+  // -------------------------------------------------------------- PLAY tab
+  function tabPlay() {
     const t = state.t;
     if (!t.schedule.length) {
-      return `<div class="scroll">${tabHeader("SCHEDULE")}
-        <div class="empty-state">${icon("calplus")}<h3>No Schedule Yet</h3>
-        <p>Add players in Details, then tap Generate Schedule.</p></div></div>`;
+      return `<div class="scroll">${tabHeader("Play")}
+        <div class="empty-state">${icon("cal")}<h3>No schedule yet</h3>
+        <p>Add players and generate a schedule to get started.</p>
+        <button class="btn btn-primary" style="margin-top:18px" data-act="editSetup">Set up tournament</button>
+        </div></div>`;
     }
     const rounds = [];
     for (let r = 0; r < t.numberOfRounds; r++) rounds.push(r);
     return `<div class="scroll">
-      ${tabHeader("SCHEDULE")}
+      ${tabHeader("Play")}
       ${rounds.map((r) => roundCard(r)).join("")}
       <div style="height:6px"></div>
-      <button class="btn btn-primary" data-act="addRound" ${state.addingRound ? "disabled" : ""}>
-        ${state.addingRound ? `${icon("spinner", "spin")} Adding Round…` : `${icon("plus")} Add Round`}
+      <button class="btn btn-secondary" data-act="addRound" ${state.addingRound ? "disabled" : ""}>
+        ${state.addingRound ? `${icon("spinner", "spin")} Adding round…` : `${icon("plus")} Add round`}
       </button>
       ${state.addRoundError ? `<div class="add-round-err">${esc(state.addRoundError)}</div>` : ""}
     </div>`;
@@ -418,7 +448,7 @@
     <div class="round-card ${open ? "open" : ""}">
       <button class="round-head" data-act="toggleRound" data-r="${r}" aria-expanded="${open}">
         <span>
-          <span class="rd">RD ${r + 1}</span>
+          <span class="rd">Round ${r + 1}</span>
           ${open ? "" : `<div class="preview">${preview}</div>`}
         </span>
         <span class="right">
@@ -428,7 +458,7 @@
       </button>
       <div class="round-body">
         ${matches.map((m) => matchView(m)).join("")}
-        ${resting.length ? `<div class="resting">${icon("seat")} Resting: ${resting.map(esc).join(", ")}</div>` : ""}
+        ${resting.length ? `<div class="resting">${icon("seat")} Sitting out: ${resting.map(esc).join(", ")}</div>` : ""}
       </div>
     </div>`;
   }
@@ -450,20 +480,20 @@
     </div>`;
   }
 
-  // ---------------------------------------------------------- LEADERBOARD tab
-  function tabLeaderboard() {
+  // --------------------------------------------------------- STANDINGS tab
+  function tabStandings() {
     const t = state.t;
     const stats = leaderboardStats();
     const rows = E.sortLeaderboard(stats, state.sort);
     const played = t.schedule.filter((m) => m.winningTeam).length;
     const sorts = [["name", "Name"], ["score", "Pts"], ["wins", "W"], ["losses", "L"], ["rests", "R"]];
     if (!t.schedule.length || played === 0) {
-      return `<div class="scroll">${tabHeader("LEADERBOARD")}
-        <div class="empty-state">${icon("trophy")}<h3>No Results Yet</h3>
-        <p>Generate a schedule and record some match scores to see the standings.</p></div></div>`;
+      return `<div class="scroll">${tabHeader("Standings")}
+        <div class="empty-state">${icon("trophy")}<h3>No results yet</h3>
+        <p>Enter a score on the Play tab and standings will appear here.</p></div></div>`;
     }
     return `<div class="scroll">
-      ${tabHeader("LEADERBOARD")}
+      ${tabHeader("Standings")}
       <div class="segmented" role="tablist">
         ${sorts.map(([k, l]) => `<button class="${state.sort === k ? "active" : ""}" data-act="sort" data-k="${k}">${l}</button>`).join("")}
       </div>
@@ -490,6 +520,29 @@
   }
 
   // ============================================================ SHEETS
+  function howSheet() {
+    openSheet(`
+      <div class="grabber"></div>
+      <h3>How Americano works</h3>
+      <div class="how-list">
+        <div class="how-item">
+          <span class="how-n">1</span>
+          <div><b>Partners change every round.</b> You play alongside a different person each time, so nobody is stuck with a fixed team.</div>
+        </div>
+        <div class="how-item">
+          <span class="how-n">2</span>
+          <div><b>You're scored individually.</b> Wins and points difference follow you, not your pair.</div>
+        </div>
+        <div class="how-item">
+          <span class="how-n">3</span>
+          <div><b>Everyone plays evenly.</b> If the numbers don't divide neatly, sitting out is shared equally.</div>
+        </div>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-primary" data-act="closeSheet">Got it</button>
+      </div>`);
+  }
+
   function scoreSheet(matchId, team) {
     const m = state.t.schedule.find((x) => x.id === matchId);
     const cur = team === 1 ? m.team1Score : m.team2Score;
@@ -497,148 +550,202 @@
     for (let i = 0; i <= LIMITS.maxScore; i++) nums.push(i);
     openSheet(`
       <div class="grabber"></div>
-      <h3>Select Score</h3>
+      <h3>Score</h3>
       <p>${esc(team === 1 ? m.team1.player1 + " & " + m.team1.player2 : m.team2.player1 + " & " + m.team2.player2)}</p>
       <div class="num-grid">
         ${nums.map((n) => `<button class="${n === cur ? "sel" : ""}" data-act="pickScore" data-id="${matchId}" data-team="${team}" data-n="${n}">${n}</button>`).join("")}
       </div>`);
   }
 
-  function switchTourneySheet() {
-    const list = Store.listTournaments();
+  function tournamentMenuSheet() {
     openSheet(`
       <div class="grabber"></div>
-      <h3>Switch Tournament</h3>
-      <p>Your saved tournaments</p>
-      <div class="saved-list" style="max-height:50vh;overflow-y:auto">
-        ${list.map((n) => `
-          <div class="saved-item" data-act="loadSaved" data-name="${esc(n)}" role="button" tabindex="0">
-            <span class="trophy">${icon("trophy")}</span>
-            <span class="nm">${esc(n)}${n === state.t.name ? " ✓" : ""}</span>
-            <span class="chev">${icon("chevr")}</span>
-          </div>`).join("")}
-      </div>
+      <h3>${esc(state.t.name)}</h3>
       <div class="sheet-actions">
-        <button class="btn btn-secondary" data-act="newTournament">${icon("plus")} New Tournament</button>
+        <button class="btn btn-secondary" data-act="editSetup">${icon("pencil")} Edit players & rounds</button>
+        <button class="btn btn-secondary" data-act="howItWorks">${icon("info")} How Americano works</button>
+        <button class="btn btn-secondary" data-act="goSaved">${icon("folder")} Saved tournaments</button>
+        <button class="btn btn-secondary" data-act="newTournament">${icon("plus")} New tournament</button>
       </div>`);
   }
 
-  function confirmResetSheet() {
+  function confirmSheet(opts) {
     openSheet(`
       <div class="grabber"></div>
-      <h3>Reset App?</h3>
-      <p>This permanently deletes all tournaments and scores on this device. This cannot be undone.</p>
+      <h3>${esc(opts.title)}</h3>
+      <p>${esc(opts.body)}</p>
       <div class="sheet-actions">
-        <button class="btn btn-primary" style="background:var(--red)" data-act="confirmReset">Reset Everything</button>
+        <button class="btn btn-primary" style="background:var(--red)" data-act="${opts.act}">${esc(opts.confirm)}</button>
         <button class="btn btn-ghost" data-act="closeSheet">Cancel</button>
       </div>`);
   }
 
   // ============================================================ WIRING
   function wire() {
-    // click delegation
     appEl.querySelectorAll("[data-act]").forEach((node) => {
       node.addEventListener("click", onAction);
       node.addEventListener("keydown", (e) => {
         if ((e.key === "Enter" || e.key === " ") && node.getAttribute("role") === "button") { e.preventDefault(); onAction(e); }
       });
     });
-    sheetHost.querySelectorAll("[data-act]").forEach((n) => n.addEventListener("click", onAction));
 
-    // create name input
+    // Tournament name (setup screen) — never blocks anything.
     const tname = document.getElementById("tname");
     if (tname) {
-      tname.addEventListener("input", (e) => {
-        state.draft.name = e.target.value;
-        const btn = appEl.querySelector('[data-act="start"]');
-        if (btn) btn.disabled = state.draft.name.trim() === "";
+      tname.addEventListener("input", (e) => { state.t.name = e.target.value; });
+      tname.addEventListener("blur", () => {
+        if (!state.t.name.trim()) state.t.name = defaultName();
+        saveCurrent();
       });
-      tname.addEventListener("keydown", (e) => { if (e.key === "Enter" && state.draft.name.trim()) startTournament(); });
     }
 
-    // player name inputs — update without full re-render (preserve focus)
+    // Player names — update without a full re-render so focus is kept.
     appEl.querySelectorAll(".player-input").forEach((inp) => {
       inp.addEventListener("input", (e) => {
-        const i = Number(e.target.dataset.i);
-        state.t.players[i] = e.target.value;
-        refreshDetailsLive();
+        state.t.players[Number(e.target.dataset.i)] = e.target.value;
+        refreshSetupLive();
       });
       inp.addEventListener("blur", saveCurrent);
     });
   }
 
-  // Live-update pieces of the Details tab that depend on player names,
-  // without re-rendering (which would drop input focus).
-  function refreshDetailsLive() {
+  /** Update the parts of Setup that depend on player names, without re-rendering. */
+  function refreshSetupLive() {
     const t = state.t;
     const dupes = duplicates(t.players);
-    // duplicate field highlight
+    const count = nonEmpty(t.players).length;
+
     appEl.querySelectorAll(".player-input").forEach((inp) => {
       const v = inp.value.trim();
       inp.classList.toggle("dupe", v !== "" && dupes.has(v));
     });
-    // count
     const countEl = appEl.querySelector(".card-title .count");
-    if (countEl) countEl.textContent = `(${nonEmpty(t.players).length})`;
-    // warn band
+    if (countEl) countEl.textContent = `(${count})`;
     const warn = document.getElementById("dupe-warn");
     if (warn) warn.innerHTML = dupes.size ? dupeWarn() : "";
-    // generate button
+
+    // Courts can't exceed what the group can fill; the control appears and
+    // disappears as the player count crosses a multiple of four.
+    const maxCourts = maxCourtsFor(count);
+    if (t.numberOfCourts > maxCourts) t.numberOfCourts = maxCourts;
+    const slot = document.getElementById("courts-slot");
+    if (slot) {
+      const want = courtsRow(t, maxCourts);
+      if (slot.innerHTML.trim() !== want.trim()) {
+        slot.innerHTML = want;
+        slot.querySelectorAll("[data-act]").forEach((n) => n.addEventListener("click", onAction));
+      }
+    }
+
+    const planEl = document.getElementById("plan-box");
+    if (planEl) {
+      const p = plan(t);
+      planEl.innerHTML = p ? planBox(p) : "";
+    }
     const gen = document.getElementById("generate-btn");
     if (gen) gen.disabled = !canGenerate(t);
   }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function onAction(e) {
     const node = e.currentTarget;
     const act = node.dataset.act;
     const t = state.t;
     switch (act) {
-      case "pickType":
-        if (node.disabled) return;
-        state.draft.type = node.dataset.type; render(); break;
-      case "start": startTournament(); break;
-      case "goSaved": if (state.t) saveCurrent(); state.editingPlayers = false; state.view = "saved"; render(); break;
-      case "backFromSaved": state.view = state.t ? "main" : "create"; render(); break;
-      case "newFromSaved":
       case "newTournament":
-        if (state.t) saveCurrent();
         closeSheet();
-        state.draft = { type: "americano", name: "" };
-        state.t = null; Store.setCurrentName("");
-        state.view = "create"; render(); break;
-      case "toggleEdit": state.editingPlayers = !state.editingPlayers; render(); break;
+        if (t) saveCurrent();
+        newTournament();
+        break;
+      case "howItWorks": closeSheet(); howSheet(); break;
+      case "goSaved":
+        closeSheet();
+        if (t) saveCurrent();
+        state.editingSaved = false;
+        state.view = "saved";
+        render();
+        break;
+      case "backFromSaved":
+        state.view = t ? (t.schedule.length ? "main" : "setup") : "start";
+        render();
+        break;
+      case "backFromSetup":
+        if (t && t.schedule.length) { saveCurrent(); state.view = "main"; }
+        else { state.t = null; Store.setCurrentName(""); state.view = "start"; }
+        render();
+        break;
+      case "toggleEdit": state.editingSaved = !state.editingSaved; render(); break;
       case "loadSaved": {
         const rec = Store.load(node.dataset.name);
-        if (rec) { state.t = rec; Store.setCurrentName(rec.name); closeSheet(); state.view = "main"; state.tab = 0; state.expanded = new Set([0]); render(); }
+        if (rec) {
+          state.t = rec;
+          Store.setCurrentName(rec.name);
+          closeSheet();
+          state.view = rec.schedule && rec.schedule.length ? "main" : "setup";
+          state.tab = 0;
+          state.expanded = new Set([0]);
+          render();
+        }
         break;
       }
       case "deleteSaved": {
         e.stopPropagation();
-        Store.delete(node.dataset.name);
-        if (state.t && state.t.name === node.dataset.name) { state.t = null; }
-        render(); break;
+        const name = node.dataset.name;
+        Store.delete(name);
+        if (state.t && state.t.name === name) state.t = null;
+        if (!Store.listTournaments().length) state.editingSaved = false;
+        render();
+        break;
       }
+      case "editSetup":
+        closeSheet();
+        state.view = "setup";
+        render();
+        break;
       case "tab": state.tab = Number(node.dataset.i); render(); break;
-      case "switchTourney": switchTourneySheet(); break;
+      case "tournamentMenu": tournamentMenuSheet(); break;
       case "addPlayer":
-        t.players.push(""); saveCurrent(); render();
-        setTimeout(() => { const inputs = appEl.querySelectorAll(".player-input"); const last = inputs[inputs.length - 1]; if (last) last.focus(); }, 0);
+        t.players.push("");
+        saveCurrent(); render();
+        setTimeout(() => {
+          const inputs = appEl.querySelectorAll(".player-input");
+          const last = inputs[inputs.length - 1];
+          if (last) last.focus();
+        }, 0);
         break;
       case "removePlayer": {
-        const i = Number(node.dataset.i);
-        t.players.splice(i, 1);
+        t.players.splice(Number(node.dataset.i), 1);
         while (t.players.length < LIMITS.minPlayers) t.players.push("");
+        t.numberOfCourts = Math.min(t.numberOfCourts, maxCourtsFor(nonEmpty(t.players).length));
         saveCurrent(); render(); break;
       }
       case "stepUp":
       case "stepDown": {
-        const key = node.dataset.key;
         const delta = act === "stepUp" ? 1 : -1;
-        if (key === "rounds") t.numberOfRounds = clamp(t.numberOfRounds + delta, LIMITS.minRounds, LIMITS.maxRounds);
-        else t.numberOfCourts = clamp(t.numberOfCourts + delta, LIMITS.minCourts, LIMITS.maxCourts);
+        if (node.dataset.key === "rounds") {
+          t.numberOfRounds = clamp(t.numberOfRounds + delta, LIMITS.minRounds, LIMITS.maxRounds);
+        } else {
+          t.numberOfCourts = clamp(t.numberOfCourts + delta, LIMITS.minCourts, maxCourtsFor(nonEmpty(t.players).length));
+        }
         saveCurrent(); render(); break;
       }
-      case "generate": generateSchedule(); break;
+      case "generate":
+        if (t.schedule.length) {
+          const scored = t.schedule.filter((m) => m.winningTeam).length;
+          if (scored > 0) {
+            confirmSheet({
+              title: "Rebuild schedule?",
+              body: `This creates new matchups and clears ${scored} recorded ${scored === 1 ? "score" : "scores"}.`,
+              confirm: "Rebuild",
+              act: "confirmGenerate",
+            });
+            break;
+          }
+        }
+        generateSchedule();
+        break;
+      case "confirmGenerate": closeSheet(); generateSchedule(); break;
       case "toggleRound": {
         const r = Number(node.dataset.r);
         if (state.expanded.has(r)) state.expanded.delete(r); else state.expanded.add(r);
@@ -650,15 +757,22 @@
         closeSheet(); break;
       case "addRound": addRound(); break;
       case "sort": state.sort = node.dataset.k; render(); break;
-      case "resetApp": confirmResetSheet(); break;
+      case "resetApp":
+        confirmSheet({
+          title: "Reset app?",
+          body: "This permanently deletes every tournament and score on this device.",
+          confirm: "Reset everything",
+          act: "confirmReset",
+        });
+        break;
       case "confirmReset":
         Store.resetAll(); closeSheet();
-        state.t = null; state.draft = { type: "americano", name: "" };
-        state.view = "create"; state.tab = 0; toast("App reset."); render(); break;
+        state.t = null; state.view = "start"; state.tab = 0;
+        toast("Everything cleared.");
+        render(); break;
       case "closeSheet": closeSheet(); break;
     }
   }
-  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   // ============================================================ BOOT
   function boot() {
@@ -666,13 +780,23 @@
     if (current) {
       const rec = Store.load(current);
       if (rec) {
-        // migrate any missing fields
         rec.restingByRound = rec.restingByRound || {};
         rec.pointsPerWin = rec.pointsPerWin || LIMITS.pointsPerWin;
+        rec.players = rec.players || ["", "", "", ""];
         state.t = rec;
-        state.view = "main";
-        state.tab = 0;
-        if (rec.schedule && rec.schedule.length) state.expanded = new Set([0]);
+        if (rec.schedule && rec.schedule.length) {
+          // Pick up where the session left off, on the round still being played.
+          state.view = "main";
+          state.tab = 0;
+          const firstUnfinished = [];
+          for (let r = 0; r < rec.numberOfRounds; r++) {
+            const ms = rec.schedule.filter((m) => m.round === r);
+            if (ms.length && ms.some((m) => !m.winningTeam)) { firstUnfinished.push(r); break; }
+          }
+          state.expanded = new Set([firstUnfinished.length ? firstUnfinished[0] : 0]);
+        } else {
+          state.view = "setup";
+        }
       }
     }
     render();
