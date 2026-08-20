@@ -283,17 +283,17 @@
   function viewStart() {
     const hasSaved = Store.listTournaments().length > 0;
     return `
-    <div class="screen">
-      <section class="hero-tile">
+    <div class="screen start-screen">
+      <div class="start-brand">
         <span class="brand-glyph">${icon("pball")}</span>
         <div class="wordmark-lg">PB GEN</div>
         <div class="hero-tagline">Everyone rotates partners.<br>Best individual record wins.</div>
-      </section>
+      </div>
 
       <div class="start-body">
-        <button class="btn btn-primary" data-act="newTournament">New tournament</button>
-        ${hasSaved ? `<button class="row-link" data-act="goSaved"><span>Saved tournaments</span>${icon("chevr")}</button>` : ""}
-        <button class="row-link" data-act="howItWorks"><span>How Americano works</span>${icon("chevr")}</button>
+        <button class="glass glass-primary" data-act="newTournament">New tournament</button>
+        ${hasSaved ? `<button class="glass row-link" data-act="goSaved"><span>Saved tournaments</span>${icon("chevr")}</button>` : ""}
+        <button class="glass row-link" data-act="howItWorks"><span>How Americano works</span>${icon("chevr")}</button>
       </div>
     </div>`;
   }
