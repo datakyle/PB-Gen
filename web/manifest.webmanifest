@@ -1,0 +1,14 @@
+{
+  "name": "PB Gen — Americano Pickleball Tournament Generator",
+  "short_name": "PB Gen",
+  "description": "Generate fair, balanced Americano-style pickleball doubles tournaments with rotating partners, live scores, and a leaderboard.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffd766",
+  "theme_color": "#ffd766",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
