@@ -7,9 +7,12 @@
  *   - LeaderboardViewModel scoring       -> computeLeaderboard
  *
  * Pure logic only (no DOM / storage), so it runs in the browser and under
- * Node for the test suite. Preserves the original algorithm's behaviour:
- * play-deficit fairness, repeat-partnership avoidance until unique pairs are
- * exhausted (then "allow repeats" mode), and fair rest rotation.
+ * Node for the test suite.
+ *
+ * The scheduler has since moved past the original Swift approach. Rather than
+ * a greedy walk with a hard no-repeat rule for partnerships and nothing at all
+ * for opponents, each round is now chosen by scoring finished rounds on both
+ * together. See the notes above AmericanoScheduler.
  */
 (function (root, factory) {
   const api = factory();
@@ -88,265 +91,361 @@
     return out;
   }
 
+  /** Fisher-Yates using a supplied [0,1) source, so results stay seeded. */
+  function shuffleWith(array, rnd) {
+    const a = array.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
   // ==========================================================================
   // AmericanoScheduler
+  //
+  // Each round is chosen by scoring whole arrangements rather than by walking
+  // a greedy list, so partnerships and opponents are balanced together instead
+  // of one being a hard rule and the other an afterthought.
+  //
+  // Cost of an arrangement (lower is better):
+  //     W_PARTNER  x (times these two have already partnered)^2
+  //   + W_OPPONENT x (times these two have already met as opponents)^2
+  //   + W_RECENT   if this exact partnership happened in the previous round
+  //
+  // Squaring matters: a fourth repeat costs far more than a first, which is
+  // what spreads repeats evenly instead of piling them on the same people.
+  // Because any split of the playing group is a legal arrangement, a round can
+  // never fail to generate — repeats are simply expensive, never forbidden.
   // ==========================================================================
+  const W_PARTNER = 100;
+  const W_OPPONENT = 6;
+  const W_RECENT = 40;
+  const RESTARTS = 8;
+
+
   class AmericanoScheduler {
-    constructor(players, numberOfRounds, numberOfCourts, seed) {
+    constructor(players, numberOfRounds, numberOfCourts, seed, options) {
       this.players = uniqueNonEmpty(players);
       this.numberOfRounds = numberOfRounds;
       this.numberOfCourts = numberOfCourts;
       this.seed = seed == null ? makeSeed() : seed;
       this.rng = new SeededRNG(this.seed);
 
-      this.playerStats = {};
-      this.usedPairs = new Set();
-      this.pairUsageCount = new Map();
+      // Weights are overridable so a future "advanced mode" can expose the
+      // partnership/opponent trade-off without touching the search.
+      const o = options || {};
+      this.wPartner = o.wPartner != null ? o.wPartner : W_PARTNER;
+      this.wOpponent = o.wOpponent != null ? o.wOpponent : W_OPPONENT;
+      this.wRecent = o.wRecent != null ? o.wRecent : W_RECENT;
+      this.restarts = o.restarts != null ? o.restarts : RESTARTS;
+
+      // Partnerships and oppositions are counted separately: they answer
+      // different questions and conflating them made the chooser treat a
+      // frequent opponent as a worn-out partner.
+      this.partnerCount = new Map();
+      this.opponentCount = new Map();
+
+      this.gamesPlayed = {};
+      this.restCount = {};
       this.lastRestRound = {};
+      this.lastRoundPartners = new Set();
       this.restingPlayersByRound = {};
       this.totalPossiblePairs = (this.players.length * (this.players.length - 1)) / 2;
-      this.allowRepeats = false;
 
       for (const p of this.players) {
+        this.gamesPlayed[p] = 0;
+        this.restCount[p] = 0;
         this.lastRestRound[p] = -1;
-        this.playerStats[p] = this._newStats();
       }
     }
 
-    _newStats() {
-      return { gamesPlayed: 0, uniquePairs: new Set(), lastPlayedRound: -1 };
+    _pc(k) { return this.partnerCount.get(k) || 0; }
+    _oc(k) { return this.opponentCount.get(k) || 0; }
+    _rand() { return this.rng.nextDouble(); }
+
+    /** How many courts this group can actually fill. */
+    _courtsInUse() {
+      const seats = this.numberOfCourts * 4;
+      const playing = Math.min(this.players.length, seats - (seats % 4));
+      return Math.floor(playing / 4);
     }
 
-    _usage(key) {
-      return this.pairUsageCount.get(key) || 0;
+    /** What it costs for these two to partner again. */
+    _partnerCost(a, b) {
+      const k = pairKey(a, b);
+      let c = this.wPartner * this._pc(k) ** 2;
+      if (this.lastRoundPartners.has(k)) c += this.wRecent;
+      return c;
     }
 
-    // --- fairness scoring (port of calculatePlayDeficitScore) ---------------
-    calculatePlayDeficitScore(player, currentRound) {
-      const stats = this.playerStats[player];
-      if (!stats) return 0;
-      const roundCount = Math.max(currentRound + 1, 1);
-      const gamesPlayedScore = stats.gamesPlayed / roundCount;
-      const uniquePairsScore = stats.uniquePairs.size / Math.max(this.players.length - 1, 1);
-      const roundsSinceLastPlayed = currentRound - stats.lastPlayedRound;
-      return 0.4 * (1.0 - gamesPlayedScore) +
-             0.4 * (1.0 - uniquePairsScore) +
-             0.2 * roundsSinceLastPlayed;
-    }
-
-    _updatePlayerStats(team1, team2, round) {
-      const all = [team1.player1, team1.player2, team2.player1, team2.player2];
-      for (const player of all) {
-        const stats = this.playerStats[player] || this._newStats();
-        stats.gamesPlayed += 1;
-        stats.lastPlayedRound = round;
-        if (player === team1.player1) stats.uniquePairs.add(team1.player2);
-        else if (player === team1.player2) stats.uniquePairs.add(team1.player1);
-        else if (player === team2.player1) stats.uniquePairs.add(team2.player2);
-        else stats.uniquePairs.add(team2.player1);
-        this.playerStats[player] = stats;
+    /** What it costs for these two teams to meet. */
+    _opponentCost(t1, t2) {
+      let c = 0;
+      for (const a of t1) {
+        for (const b of t2) c += this.wOpponent * this._oc(pairKey(a, b)) ** 2;
       }
+      return c;
     }
 
-    _updatePairUsage(team1, team2) {
-      const pair1 = pairKey(team1.player1, team1.player2);
-      const pair2 = pairKey(team2.player1, team2.player2);
-      this.usedPairs.add(pair1);
-      this.usedPairs.add(pair2);
-      this.pairUsageCount.set(pair1, this._usage(pair1) + 1);
-      this.pairUsageCount.set(pair2, this._usage(pair2) + 1);
-      const opp = [
-        pairKey(team1.player1, team2.player1),
-        pairKey(team1.player1, team2.player2),
-        pairKey(team1.player2, team2.player1),
-        pairKey(team1.player2, team2.player2),
-      ];
-      for (const k of opp) this.pairUsageCount.set(k, this._usage(k) + 1);
+    /**
+     * Stage 1 — pair the pool into teams, preferring partnerships that have
+     * happened least. This is a matching problem, so it is solved as one:
+     * randomised greedy seeds refined by swapping partners between two teams.
+     * Attacking partnerships directly is what lets a complete rotation
+     * actually complete, which a positional hill-climb kept missing.
+     */
+    _matchPartners(pool) {
+      // A plain shuffled pass, repeated from _optimiseRound. Deterministic
+      // orderings (such as most-constrained-first) were measurably worse here:
+      // they collapse the variety between restarts, and the variety is what
+      // finds a clean round.
+      const order = shuffleWith(pool, () => this._rand());
+      const used = new Set();
+      const teams = [];
+      for (const p of order) {
+        if (used.has(p)) continue;
+        used.add(p);
+        let pick = null;
+        let pickCost = Infinity;
+        for (const q of order) {
+          if (q === p || used.has(q)) continue;
+          const c = this._partnerCost(p, q) + this._rand() * 1e-3;
+          if (c < pickCost) { pickCost = c; pick = q; }
+        }
+        if (pick === null) break; // odd pool; cannot happen with 4c players
+        used.add(pick);
+        teams.push([p, pick]);
+      }
+
+      let improved = true;
+      let passes = 0;
+      while (improved && passes++ < 20) {
+        improved = false;
+        for (let i = 0; i < teams.length; i++) {
+          for (let j = i + 1; j < teams.length; j++) {
+            const [a, b] = teams[i];
+            const [c, d] = teams[j];
+            const cur = this._partnerCost(a, b) + this._partnerCost(c, d);
+            const alt1 = this._partnerCost(a, c) + this._partnerCost(b, d);
+            const alt2 = this._partnerCost(a, d) + this._partnerCost(b, c);
+            if (alt1 < cur - 1e-9 && alt1 <= alt2) {
+              teams[i] = [a, c]; teams[j] = [b, d]; improved = true;
+            } else if (alt2 < cur - 1e-9) {
+              teams[i] = [a, d]; teams[j] = [b, c]; improved = true;
+            }
+          }
+        }
+      }
+      return teams;
     }
 
-    _averagePairUsage(player, opponents) {
-      let sum = 0;
-      for (const o of opponents) sum += this._usage(pairKey(player, o));
-      return sum / opponents.length;
+    /**
+     * Stage 2 — put the teams onto courts, two per court, so that repeat
+     * opponents are spread as evenly as possible. With at most five courts
+     * this is small enough to solve exactly.
+     */
+    _pairTeamsIntoCourts(teams) {
+      if (teams.length === 2) return [{ team1: teams[0], team2: teams[1] }];
+
+      if (teams.length <= 12) {
+        let bestPairs = null;
+        let bestCost = Infinity;
+        const search = (remaining, acc, cost) => {
+          if (cost >= bestCost) return; // prune
+          if (remaining.length === 0) { bestCost = cost; bestPairs = acc.slice(); return; }
+          const a = remaining[0];
+          for (let i = 1; i < remaining.length; i++) {
+            const b = remaining[i];
+            const rest = remaining.filter((_, k) => k !== 0 && k !== i);
+            acc.push({ team1: a, team2: b });
+            search(rest, acc, cost + this._opponentCost(a, b));
+            acc.pop();
+          }
+        };
+        search(teams, [], 0);
+        return bestPairs;
+      }
+
+      // Greedy fallback for unusually large court counts.
+      const pool = teams.slice();
+      const out = [];
+      while (pool.length > 1) {
+        const a = pool.shift();
+        let bi = 0;
+        let bc = Infinity;
+        for (let i = 0; i < pool.length; i++) {
+          const c = this._opponentCost(a, pool[i]);
+          if (c < bc) { bc = c; bi = i; }
+        }
+        out.push({ team1: a, team2: pool.splice(bi, 1)[0] });
+      }
+      return out;
     }
 
-    _validateRoundBalance() {
-      const counts = Object.values(this.playerStats).map((s) => s.gamesPlayed);
-      if (counts.length === 0) return true;
-      return Math.max(...counts) - Math.min(...counts) <= 1;
+    /**
+     * Try several partner matchings and keep the one whose *finished* round is
+     * cheapest — partnerships and opponents judged together. Scoring only the
+     * matching would hand stage 2 a set of teams it cannot pair up well.
+     */
+    _optimiseRound(pool) {
+      let best = null;
+      let bestCost = Infinity;
+      for (let r = 0; r < this.restarts; r++) {
+        const teams = this._matchPartners(pool);
+        const pairs = this._pairTeamsIntoCourts(teams);
+        let cost = 0;
+        for (const t of teams) cost += this._partnerCost(t[0], t[1]);
+        for (const p of pairs) cost += this._opponentCost(p.team1, p.team2);
+        if (cost < bestCost) {
+          bestCost = cost;
+          best = pairs;
+          if (cost === 0) break; // nothing repeats at all
+        }
+      }
+      return best;
     }
 
-    // --- public API ---------------------------------------------------------
+    /** Choose who sits out: level the totals first, then who waited longest. */
+    _chooseResters(count, round) {
+      if (count <= 0) return [];
+      const ordered = shuffleWith(this.players, () => this._rand()).sort((a, b) => {
+        if (this.restCount[a] !== this.restCount[b]) return this.restCount[a] - this.restCount[b];
+        if (this.lastRestRound[a] !== this.lastRestRound[b]) return this.lastRestRound[a] - this.lastRestRound[b];
+        return this.gamesPlayed[b] - this.gamesPlayed[a];
+      });
+      return ordered.slice(0, count);
+    }
+
+    _commit(split, round, court) {
+      const p1 = pairKey(split.team1[0], split.team1[1]);
+      const p2 = pairKey(split.team2[0], split.team2[1]);
+      this.partnerCount.set(p1, this._pc(p1) + 1);
+      this.partnerCount.set(p2, this._pc(p2) + 1);
+      for (const a of split.team1) {
+        for (const b of split.team2) {
+          const k = pairKey(a, b);
+          this.opponentCount.set(k, this._oc(k) + 1);
+        }
+      }
+      for (const p of [...split.team1, ...split.team2]) this.gamesPlayed[p] += 1;
+      return {
+        id: uuid(),
+        round,
+        court,
+        team1: { player1: split.team1[0], player2: split.team1[1] },
+        team2: { player1: split.team2[0], player2: split.team2[1] },
+        team1Score: 0,
+        team2Score: 0,
+        winningTeam: null,
+      };
+    }
+
+    _generateRound(round) {
+      const courts = this._courtsInUse();
+      const playing = courts * 4;
+
+      const resting = this._chooseResters(this.players.length - playing, round);
+      const restingSet = new Set(resting);
+      for (const p of resting) {
+        this.restCount[p] += 1;
+        this.lastRestRound[p] = round;
+      }
+      const pool = this.players.filter((p) => !restingSet.has(p));
+
+      const courtsForRound = this._optimiseRound(pool);
+      const matches = [];
+      const partnersThisRound = new Set();
+      courtsForRound.forEach((split, i) => {
+        matches.push(this._commit(split, round, i + 1));
+        partnersThisRound.add(pairKey(split.team1[0], split.team1[1]));
+        partnersThisRound.add(pairKey(split.team2[0], split.team2[1]));
+      });
+      this.lastRoundPartners = partnersThisRound;
+      return { matches, resting };
+    }
+
     generateSchedule() {
       if (this.players.length < 4) return null;
       if (this.numberOfCourts < 1) return null;
 
       let schedule = [];
       this.restingPlayersByRound = {};
-      this.usedPairs = new Set();
-      this.pairUsageCount = new Map();
-      this.allowRepeats = false;
-      for (const p of this.players) this.playerStats[p] = this._newStats();
+      this.partnerCount = new Map();
+      this.opponentCount = new Map();
+      this.lastRoundPartners = new Set();
+      for (const p of this.players) {
+        this.gamesPlayed[p] = 0;
+        this.restCount[p] = 0;
+        this.lastRestRound[p] = -1;
+      }
 
       for (let round = 0; round < this.numberOfRounds; round++) {
-        if (!this.allowRepeats && this.usedPairs.size >= this.totalPossiblePairs) {
-          this.allowRepeats = true;
-        }
-        let { matches, resting } = this._generateRound(round);
-        // If unique-pair mode dead-ends before all pairs are formally
-        // exhausted, permit repeats and retry rather than silently dropping
-        // the round (the original app could return fewer rounds than asked).
-        if (matches.length === 0 && !this.allowRepeats) {
-          this.allowRepeats = true;
-          ({ matches, resting } = this._generateRound(round));
-        }
-        if (matches.length === 0) {
-          if (round === 0) return null;
-          return { schedule, restingByRound: this.restingPlayersByRound };
-        }
+        const { matches, resting } = this._generateRound(round);
         schedule = schedule.concat(matches);
         this.restingPlayersByRound[round] = resting;
       }
       return { schedule, restingByRound: this.restingPlayersByRound };
     }
 
-    _generateRound(round) {
-      // Sort players by play deficit (descending — neediest first).
-      let available = sortByPredicate(this.players, (p1, p2) =>
-        this.calculatePlayDeficitScore(p1, round) > this.calculatePlayDeficitScore(p2, round)
-      );
-
-      const maxMatches = Math.min(this.numberOfCourts, Math.floor(available.length / 4));
-      const maxPlayersThisRound = maxMatches * 4;
-      const playersToRest = available.length - maxPlayersThisRound;
-
-      let resting = [];
-      if (playersToRest > 0) {
-        const restCandidates = sortByPredicate(available, (p1, p2) => {
-          const r1 = this.lastRestRound[p1] ?? -1;
-          const r2 = this.lastRestRound[p2] ?? -1;
-          if (r1 !== r2) return r1 < r2;
-          return (this.playerStats[p1]?.gamesPlayed ?? 0) > (this.playerStats[p2]?.gamesPlayed ?? 0);
-        });
-        resting = restCandidates.slice(0, playersToRest);
-        const restingSet = new Set(resting);
-        available = available.filter((p) => !restingSet.has(p));
-        for (const p of resting) this.lastRestRound[p] = round;
-      }
-
-      const matches = this._generateMatchesWithBacktracking(available, round, 1);
-      if (matches) {
-        for (const m of matches) {
-          this._updatePlayerStats(m.team1, m.team2, round);
-          this._updatePairUsage(m.team1, m.team2);
-        }
-        return { matches, resting };
-      }
-      return { matches: [], resting };
-    }
-
-    _generateMatchesWithBacktracking(availablePlayers, round, courtNumber) {
-      const matches = [];
-      let remaining = availablePlayers.slice();
-
-      if (remaining.length === 0) return matches;
-      if (remaining.length < 4) return null;
-
-      const player1 = remaining.shift();
-
-      // No "previous round" pairs are available inside a fresh recursion
-      // (existingSchedule is empty in the Swift call), matching the original.
-      const previousPairs = new Set();
-
-      const potentialPartners = sortByPredicate(remaining, (a, b) => {
-        const pa = pairKey(player1, a);
-        const pb = pairKey(player1, b);
-        if (this.allowRepeats) {
-          if (previousPairs.has(pa) && !previousPairs.has(pb)) return false;
-          if (!previousPairs.has(pa) && previousPairs.has(pb)) return true;
-          const rf = this.rng.nextUpTo(0.3);
-          return this._usage(pa) + rf < this._usage(pb);
-        }
-        return this._usage(pa) < this._usage(pb);
-      });
-
-      for (const partner1 of potentialPartners) {
-        const team1Pair = pairKey(player1, partner1);
-        if (!this.allowRepeats && this.usedPairs.has(team1Pair)) continue;
-
-        const playersForTeam2 = remaining.filter((p) => p !== partner1);
-
-        const team2Candidates = sortByPredicate(playersForTeam2, (a, b) => {
-          if (this.allowRepeats) {
-            const av1 = this._averagePairUsage(a, [player1, partner1]);
-            const av2 = this._averagePairUsage(b, [player1, partner1]);
-            const rf = this.rng.nextUpTo(0.3);
-            return av1 + rf < av2;
+    /** Rebuild counters from a schedule so an added round continues fairly. */
+    _replay(existingSchedule) {
+      const byRound = new Map();
+      for (const m of existingSchedule) {
+        if (!byRound.has(m.round)) byRound.set(m.round, []);
+        byRound.get(m.round).push(m);
+        const p1 = pairKey(m.team1.player1, m.team1.player2);
+        const p2 = pairKey(m.team2.player1, m.team2.player2);
+        this.partnerCount.set(p1, this._pc(p1) + 1);
+        this.partnerCount.set(p2, this._pc(p2) + 1);
+        for (const a of [m.team1.player1, m.team1.player2]) {
+          for (const b of [m.team2.player1, m.team2.player2]) {
+            const k = pairKey(a, b);
+            this.opponentCount.set(k, this._oc(k) + 1);
           }
-          return this._averagePairUsage(a, [player1, partner1]) <
-                 this._averagePairUsage(b, [player1, partner1]);
-        });
-
-        for (const player2 of team2Candidates) {
-          const remainingForTeam2 = team2Candidates.filter((p) => p !== player2);
-
-          const potentialPartners2 = sortByPredicate(remainingForTeam2, (a, b) => {
-            const pa = pairKey(player2, a);
-            const pb = pairKey(player2, b);
-            if (this.allowRepeats) {
-              if (previousPairs.has(pa) && !previousPairs.has(pb)) return false;
-              if (!previousPairs.has(pa) && previousPairs.has(pb)) return true;
-              const rf = this.rng.nextUpTo(0.3);
-              return this._usage(pa) + rf < this._usage(pb);
-            }
-            return this._usage(pa) < this._usage(pb);
-          });
-
-          for (const partner2 of potentialPartners2) {
-            const team2Pair = pairKey(player2, partner2);
-            if (!this.allowRepeats && this.usedPairs.has(team2Pair)) continue;
-            if (this.allowRepeats && previousPairs.has(team1Pair) && previousPairs.has(team2Pair)) continue;
-
-            const team1 = { player1: player1, player2: partner1 };
-            const team2 = { player1: player2, player2: partner2 };
-            const match = {
-              id: uuid(),
-              round,
-              court: courtNumber,
-              team1,
-              team2,
-              team1Score: 0,
-              team2Score: 0,
-              winningTeam: null,
-            };
-
-            const used = new Set([partner1, player2, partner2]);
-            const nextPlayers = remaining.filter((p) => !used.has(p));
-
-            const rest = this._generateMatchesWithBacktracking(nextPlayers, round, courtNumber + 1);
-            if (rest) {
-              matches.push(match);
-              for (const m of rest) matches.push(m);
-              return matches;
-            }
+        }
+        for (const p of [m.team1.player1, m.team1.player2, m.team2.player1, m.team2.player2]) {
+          if (this.gamesPlayed[p] !== undefined) this.gamesPlayed[p] += 1;
+        }
+      }
+      // Anyone absent from a round was sitting it out.
+      const rounds = [...byRound.keys()].sort((a, b) => a - b);
+      for (const r of rounds) {
+        const played = new Set();
+        for (const m of byRound.get(r)) {
+          played.add(m.team1.player1); played.add(m.team1.player2);
+          played.add(m.team2.player1); played.add(m.team2.player2);
+        }
+        for (const p of this.players) {
+          if (!played.has(p)) {
+            this.restCount[p] += 1;
+            this.lastRestRound[p] = r;
           }
         }
       }
-      return null;
+      const last = rounds.length ? rounds[rounds.length - 1] : null;
+      this.lastRoundPartners = new Set();
+      if (last !== null) {
+        for (const m of byRound.get(last)) {
+          this.lastRoundPartners.add(pairKey(m.team1.player1, m.team1.player2));
+          this.lastRoundPartners.add(pairKey(m.team2.player1, m.team2.player2));
+        }
+      }
     }
 
     generateAdditionalRound(existingSchedule) {
+      if (this.players.length < 4) return null;
       const newRound = (existingSchedule.length ? existingSchedule[existingSchedule.length - 1].round : -1) + 1;
       this.numberOfRounds += 1;
 
-      // Rebuild usage/stats from the existing schedule so fairness continues.
-      for (const m of existingSchedule) {
-        this._updatePairUsage(m.team1, m.team2);
-        this._updatePlayerStats(m.team1, m.team2, m.round);
+      this.partnerCount = new Map();
+      this.opponentCount = new Map();
+      for (const p of this.players) {
+        this.gamesPlayed[p] = 0;
+        this.restCount[p] = 0;
+        this.lastRestRound[p] = -1;
       }
-      if (!this.allowRepeats && this.usedPairs.size >= this.totalPossiblePairs) {
-        this.allowRepeats = true;
-      }
+      this._replay(existingSchedule);
 
       const { matches, resting } = this._generateRound(newRound);
       if (matches.length === 0) {
@@ -357,7 +456,6 @@
       return { matches, resting };
     }
   }
-
   // Lightweight UUID (RFC4122 v4-ish) — crypto when available.
   function uuid() {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
