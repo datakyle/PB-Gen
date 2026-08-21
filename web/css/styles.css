@@ -745,3 +745,6 @@ button:focus-visible, .field:focus-visible, .fmt-opt:focus-visible, .saved-item:
 .level-dot:active { transform: scale(0.9); }
 .adv-src { display: flex; align-items: center; gap: 6px; color: var(--blue); margin-top: 8px; }
 .adv-src svg { width: 15px; height: 15px; flex: none; }
+
+/* destructive secondary action */
+.danger-link { color: var(--red); display: block; margin: 4px auto 0; }

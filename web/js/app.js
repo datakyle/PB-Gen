@@ -267,6 +267,50 @@
     }
   }
 
+  /**
+   * The last round holding a recorded score. Everything up to here is treated
+   * as played and must never be regenerated — cutting anywhere earlier would
+   * throw away a result someone entered.
+   */
+  function lastScoredRound(t) {
+    let last = -1;
+    for (const m of t.schedule || []) {
+      if (m.winningTeam && m.round > last) last = m.round;
+    }
+    return last;
+  }
+
+  /** Regenerate only the rounds still to come, keeping played rounds intact. */
+  function rebuildRemaining() {
+    const t = state.t;
+    const keep = lastScoredRound(t);
+    const scheduler = new E.AmericanoScheduler(
+      t.players, t.numberOfRounds, t.numberOfCourts,
+      BigInt(t.seed || E.makeSeed()), schedulerOptions(t)
+    );
+    const res = scheduler.generateRemaining(t.schedule.slice(), keep);
+    if (!res) { toast("Could not rebuild the remaining rounds."); return; }
+
+    t.schedule = t.schedule.filter((m) => m.round <= keep).concat(res.schedule);
+    for (let r = keep + 1; r < t.numberOfRounds; r++) {
+      t.restingByRound[r] = res.restingByRound[r] || [];
+      if (res.awayByRound && res.awayByRound[r]) {
+        t.awayByRound = t.awayByRound || {};
+        t.awayByRound[r] = res.awayByRound[r];
+      } else if (t.awayByRound) {
+        delete t.awayByRound[r];
+      }
+    }
+    state.editing = null;
+    state.expanded = new Set([keep + 1]);
+    saveCurrent();
+    state.view = "main";
+    state.tab = 0;
+    render();
+    const n = t.numberOfRounds - keep - 1;
+    toast(`Rebuilt ${n} ${n === 1 ? "round" : "rounds"}. Rounds 1\u2013${keep + 1} and their scores are untouched.`);
+  }
+
   function addRound() {
     const t = state.t;
     if (state.addingRound || !t.schedule.length) return;
@@ -471,12 +515,51 @@
 
         ${Store.isBeta() ? advancedCard(t) : ""}
 
-        <button class="btn btn-primary" id="generate-btn" data-act="generate" ${ready ? "" : "disabled"}>
-          ${editing ? "Rebuild schedule" : "Generate schedule"}
-        </button>
-        ${editing ? `<p class="hint-line center">Rebuilding creates new matchups and clears any scores.</p>` : ""}
+        ${generateActions(t, ready, editing)}
       </div>
     </div>`;
+  }
+
+  /**
+   * With results already recorded, the safe action leads: rebuild only what
+   * has not been played. Starting over is still available, but it is the
+   * destructive one, so it sits underneath as a plain link.
+   */
+  function generateActions(t, ready, editing) {
+    const keep = editing ? lastScoredRound(t) : -1;
+    const hasScores = keep >= 0;
+    const remaining = t.numberOfRounds - keep - 1;
+
+    if (!editing) {
+      return `
+        <button class="btn btn-primary" id="generate-btn" data-act="generate" ${ready ? "" : "disabled"}>
+          Generate schedule
+        </button>`;
+    }
+    if (!hasScores) {
+      return `
+        <button class="btn btn-primary" id="generate-btn" data-act="generate" ${ready ? "" : "disabled"}>
+          Rebuild schedule
+        </button>
+        <p class="hint-line center">Nothing has been scored yet, so nothing will be lost.</p>`;
+    }
+    if (remaining < 1) {
+      return `
+        <button class="btn btn-primary" id="generate-btn" data-act="generate" ${ready ? "" : "disabled"}>
+          Rebuild schedule
+        </button>
+        <p class="hint-line center">Every round has been scored. Rebuilding clears ${scoreCount(t)} of them — add a round instead to keep playing.</p>`;
+    }
+    return `
+      <button class="btn btn-primary" id="generate-btn" data-act="rebuildRemaining" ${ready ? "" : "disabled"}>
+        Rebuild remaining ${remaining} ${remaining === 1 ? "round" : "rounds"}
+      </button>
+      <p class="hint-line center">Keeps rounds 1\u2013${keep + 1} and their scores.</p>
+      <button class="link-btn danger-link" data-act="generate">Start over instead</button>`;
+  }
+
+  function scoreCount(t) {
+    return (t.schedule || []).filter((m) => m.winningTeam).length;
   }
 
   // Courts only make sense once there are enough players for a second court.
@@ -1363,6 +1446,7 @@
         generateSchedule();
         break;
       case "confirmGenerate": closeSheet(); generateSchedule(); break;
+      case "rebuildRemaining": rebuildRemaining(); break;
       case "toggleRound": {
         const r = Number(node.dataset.r);
         if (state.expanded.has(r)) state.expanded.delete(r); else state.expanded.add(r);

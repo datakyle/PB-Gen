@@ -727,8 +727,10 @@
           played.add(m.team1.player1); played.add(m.team1.player2);
           played.add(m.team2.player1); played.add(m.team2.player2);
         }
+        const hereThisRound = new Set(this._availableAt(r));
         for (const p of this.players) {
-          if (!played.has(p)) {
+          // Away is not the same as resting, so only count people who were here.
+          if (!played.has(p) && hereThisRound.has(p)) {
             this.restCount[p] += 1;
             this.lastRestRound[p] = r;
           }
@@ -742,6 +744,48 @@
           this.lastRoundPartners.add(pairKey(m.team2.player1, m.team2.player2));
         }
       }
+    }
+
+    /**
+     * Rebuild only the rounds that have not been played.
+     *
+     * Rounds up to and including `keepThrough` are replayed to restore the
+     * fairness state, then everything after is generated afresh. Nothing that
+     * has already happened is touched, so recorded scores survive — which is
+     * what makes this safe to run mid-session.
+     */
+    generateRemaining(existingSchedule, keepThrough) {
+      if (this.players.length < 4) return null;
+      if (this.numberOfCourts < 1) return null;
+
+      this.partnerCount = new Map();
+      this.opponentCount = new Map();
+      this.lastRoundPartners = new Set();
+      this.restingPlayersByRound = {};
+      this.awayByRound = {};
+      for (const p of this.players) {
+        this.gamesPlayed[p] = 0;
+        this.restCount[p] = 0;
+        this.lastRestRound[p] = -1;
+        this.partnerStrengthSum[p] = 0;
+      }
+
+      const kept = existingSchedule.filter((m) => m.round <= keepThrough);
+      this._replay(kept);
+
+      let fresh = [];
+      for (let round = keepThrough + 1; round < this.numberOfRounds; round++) {
+        const { matches, resting, away } = this._generateRound(round);
+        fresh = fresh.concat(matches);
+        this.restingPlayersByRound[round] = resting;
+        if (away && away.length) this.awayByRound[round] = away;
+      }
+      return {
+        schedule: fresh,
+        restingByRound: this.restingPlayersByRound,
+        awayByRound: this.awayByRound,
+        keptThrough: keepThrough,
+      };
     }
 
     generateAdditionalRound(existingSchedule) {
