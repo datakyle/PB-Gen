@@ -154,8 +154,40 @@
     return Math.ceil((playerCount * (playerCount - 1)) / 2 / (2 * inUse));
   }
 
+  /**
+   * How evenly the draw worked out, once player strengths are known: the gap
+   * between the luckiest and unluckiest player's average partner, and how
+   * lopsided the average match was.
+   */
+  function strengthStats(players, schedule, strength) {
+    if (!strength) return {};
+    const vals = players.map((p) => (strength[p] != null ? strength[p] : 0));
+    const mean = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
+    const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (vals.length || 1));
+    if (sd <= 1e-9) return {};
+    const z = {};
+    players.forEach((p, i) => { z[p] = (vals[i] - mean) / sd; });
+
+    const sum = {}, count = {};
+    players.forEach((p) => { sum[p] = 0; count[p] = 0; });
+    let gapTotal = 0, games = 0;
+    for (const m of schedule) {
+      const t1 = [m.team1.player1, m.team1.player2], t2 = [m.team2.player1, m.team2.player2];
+      sum[t1[0]] += z[t1[1]]; count[t1[0]]++; sum[t1[1]] += z[t1[0]]; count[t1[1]]++;
+      sum[t2[0]] += z[t2[1]]; count[t2[0]]++; sum[t2[1]] += z[t2[0]]; count[t2[1]]++;
+      gapTotal += Math.abs((z[t1[0]] + z[t1[1]]) - (z[t2[0]] + z[t2[1]]));
+      games++;
+    }
+    const avg = players.filter((p) => count[p]).map((p) => sum[p] / count[p]);
+    if (!avg.length) return {};
+    return {
+      partnerLuckSpread: Math.max(...avg) - Math.min(...avg),
+      averageTeamGap: games ? gapTotal / games : 0,
+    };
+  }
+
   /** What a finished schedule actually delivers. */
-  function analyzeSchedule(players, schedule, restingByRound, availability) {
+  function analyzeSchedule(players, schedule, restingByRound, availability, strength) {
     const partner = new Map(), oppose = new Map();
     const games = {}, rests = {};
     for (const p of players) { games[p] = 0; rests[p] = 0; }
@@ -200,6 +232,7 @@
       // With people arriving late or leaving early, a games-played range is
       // expected rather than unfair, so say which case this is.
       partialAttendance: !!availability && Object.keys(availability).length > 0,
+      ...strengthStats(players, schedule, strength),
     };
   }
 
@@ -224,6 +257,7 @@
   const W_OPPONENT = 6;
   const W_RECENT = 40;
   const RESTARTS = 8;
+  const W_BALANCE = 45;    // strength-fairness weight, subordinate to repeats
   const AVOID_COST = 1e7;   // effectively a ban, without making rounds impossible
 
 
@@ -253,6 +287,28 @@
       // Someone who has not arrived yet is not "resting" — they are away, and
       // must not be counted against anyone's share of sit-outs.
       this.availability = o.availability || null;
+
+      // Optional strength-aware fairness. Strengths are z-scored on the way in
+      // so the weights below mean the same thing whatever scale they arrive on
+      // (hand-set levels, or point difference earned so far).
+      this.balanceMode = o.balanceMode || null;   // "fair" | "close" | null
+      this.wBalance = o.wBalance != null ? o.wBalance : W_BALANCE;
+      this.strength = null;
+      if (this.balanceMode && o.strength) {
+        const vals = this.players.map((p) => (o.strength[p] != null ? o.strength[p] : 0));
+        const mean = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
+        const varr = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (vals.length || 1);
+        const sd = Math.sqrt(varr);
+        this.strength = {};
+        this.players.forEach((p, i) => {
+          this.strength[p] = sd > 1e-9 ? (vals[i] - mean) / sd : 0;
+        });
+        // Everyone identical means there is nothing to balance.
+        if (sd <= 1e-9) { this.strength = null; this.balanceMode = null; }
+      }
+      // Running total of the strength of each player's partners so far.
+      this.partnerStrengthSum = {};
+      for (const p of this.players) this.partnerStrengthSum[p] = 0;
 
       // Partnerships and oppositions are counted separately: they answer
       // different questions and conflating them made the chooser treat a
@@ -309,6 +365,22 @@
       if (this.avoidSet.has(k)) return AVOID_COST;
       let c = this.wPartner * this._pc(k) ** 2;
       if (this.lastRoundPartners.has(k)) c += this.wRecent;
+
+      if (this.strength) {
+        const sa = this.strength[a], sb = this.strength[b];
+        if (this.balanceMode === "fair") {
+          // Even out the draw: push everyone's cumulative partner strength
+          // toward average, so nobody is repeatedly carried or repeatedly sunk.
+          c += this.wBalance * (
+            (this.partnerStrengthSum[a] + sb) ** 2 +
+            (this.partnerStrengthSum[b] + sa) ** 2
+          );
+        } else if (this.balanceMode === "close") {
+          // Even out the teams: a strong player pairs with a weak one, so
+          // every team lands near the same strength and games stay close.
+          c += this.wBalance * ((sa + sb) ** 2);
+        }
+      }
       return c;
     }
 
@@ -478,6 +550,12 @@
         }
       }
       for (const p of [...split.team1, ...split.team2]) this.gamesPlayed[p] += 1;
+      if (this.strength) {
+        this.partnerStrengthSum[split.team1[0]] += this.strength[split.team1[1]];
+        this.partnerStrengthSum[split.team1[1]] += this.strength[split.team1[0]];
+        this.partnerStrengthSum[split.team2[0]] += this.strength[split.team2[1]];
+        this.partnerStrengthSum[split.team2[1]] += this.strength[split.team2[0]];
+      }
       return {
         id: uuid(),
         round,
@@ -505,6 +583,7 @@
       if (this.lockedPairs.length || this.avoidSet.size) return null;
       // The tables assume everyone is present for every round.
       if (this.availability) return null;
+      if (this.balanceMode) return null;
       if (this.wPartner !== W_PARTNER || this.wOpponent !== W_OPPONENT) return null;
       const seat = shuffleWith(this.players, () => this._rand());
       return rounds.map((games) =>
@@ -585,6 +664,7 @@
         this.gamesPlayed[p] = 0;
         this.restCount[p] = 0;
         this.lastRestRound[p] = -1;
+        this.partnerStrengthSum[p] = 0;
       }
 
       // Use the perfect table where one exists, and let the search carry on
@@ -629,6 +709,15 @@
         for (const p of [m.team1.player1, m.team1.player2, m.team2.player1, m.team2.player2]) {
           if (this.gamesPlayed[p] !== undefined) this.gamesPlayed[p] += 1;
         }
+        if (this.strength) {
+          const add = (x, y) => {
+            if (this.partnerStrengthSum[x] !== undefined && this.strength[y] !== undefined) {
+              this.partnerStrengthSum[x] += this.strength[y];
+            }
+          };
+          add(m.team1.player1, m.team1.player2); add(m.team1.player2, m.team1.player1);
+          add(m.team2.player1, m.team2.player2); add(m.team2.player2, m.team2.player1);
+        }
       }
       // Anyone absent from a round was sitting it out.
       const rounds = [...byRound.keys()].sort((a, b) => a - b);
@@ -666,6 +755,7 @@
         this.gamesPlayed[p] = 0;
         this.restCount[p] = 0;
         this.lastRestRound[p] = -1;
+        this.partnerStrengthSum[p] = 0;
       }
       this._replay(existingSchedule);
 

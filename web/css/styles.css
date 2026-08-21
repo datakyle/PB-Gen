@@ -430,7 +430,7 @@ button.wordmark-lg { background: none; border: none; padding: 0; cursor: pointer
   width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; padding: 0;
 }
 .pair-x svg { width: 12px; height: 12px; }
-.pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; padding-right: 6px; }
 .pick-row {
   width: 100%; text-align: left; background: var(--white); border: 1px solid var(--hairline);
   border-radius: var(--r-md); padding: 13px 15px; cursor: pointer; font-family: var(--font);
@@ -725,3 +725,23 @@ button:focus-visible, .field:focus-visible, .fmt-opt:focus-visible, .saved-item:
 .resting.away { background: rgba(0,0,0,0.04); }
 .avail-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .avail-tag { font-size: 13px; color: var(--ink-48); letter-spacing: -0.08px; flex: none; }
+
+/* player levels (beta) */
+.level-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 2px; border-bottom: 1px solid var(--divider);
+}
+.level-row:last-child { border-bottom: none; }
+.level-name {
+  font-size: 17px; letter-spacing: -0.374px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.level-dots { display: inline-flex; gap: 5px; flex: none; }
+.level-dot {
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  border: 1.5px solid var(--hairline); background: var(--white); padding: 0;
+}
+.level-dot.on { background: var(--blue); border-color: var(--blue); }
+.level-dot:active { transform: scale(0.9); }
+.adv-src { display: flex; align-items: center; gap: 6px; color: var(--blue); margin-top: 8px; }
+.adv-src svg { width: 15px; height: 15px; flex: none; }

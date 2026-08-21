@@ -192,6 +192,39 @@
     };
   }
 
+  /**
+   * Where player strength comes from, in order of preference:
+   *   1. levels the organiser set by hand
+   *   2. failing that, results so far (points won minus conceded, per game)
+   * Returns null when there is nothing to go on, so the feature stays inert
+   * rather than pretending to know something.
+   */
+  function strengthFor(t) {
+    const names = nonEmpty(t.players).map((p) => p.trim());
+    const levels = t.levels || {};
+    if (names.some((n) => levels[n])) {
+      const out = {};
+      names.forEach((n) => { out[n] = levels[n] || 3; }); // unset sits mid-scale
+      return { map: out, source: "levels" };
+    }
+    const played = {}, diff = {};
+    names.forEach((n) => { played[n] = 0; diff[n] = 0; });
+    let any = false;
+    for (const m of t.schedule || []) {
+      if (!m.winningTeam) continue;
+      any = true;
+      const margin = Math.abs((m.team1Score || 0) - (m.team2Score || 0));
+      const win = m.winningTeam === 1 ? m.team1 : m.team2;
+      const lose = m.winningTeam === 1 ? m.team2 : m.team1;
+      for (const p of [win.player1, win.player2]) { if (played[p] !== undefined) { played[p]++; diff[p] += margin; } }
+      for (const p of [lose.player1, lose.player2]) { if (played[p] !== undefined) { played[p]++; diff[p] -= margin; } }
+    }
+    if (!any) return null;
+    const out = {};
+    names.forEach((n) => { out[n] = played[n] ? diff[n] / played[n] : 0; });
+    return { map: out, source: "results" };
+  }
+
   /** Scheduler options from the tournament's advanced settings, if any. */
   function schedulerOptions(t) {
     if (!Store.isBeta()) return undefined;
@@ -204,6 +237,10 @@
     if (t.lockedPairs && t.lockedPairs.length) opts.lockedPairs = t.lockedPairs;
     if (t.avoidPairs && t.avoidPairs.length) opts.avoidPairs = t.avoidPairs;
     if (t.availability && Object.keys(t.availability).length) opts.availability = t.availability;
+    if (t.balanceMode && t.balanceMode !== "off") {
+      const st = strengthFor(t);
+      if (st) { opts.balanceMode = t.balanceMode; opts.strength = st.map; }
+    }
     return Object.keys(opts).length ? opts : undefined;
   }
 
@@ -482,6 +519,31 @@
     return "all rounds";
   }
 
+  /**
+   * Explains the chosen balance mode, including what it costs. "Close games"
+   * genuinely wrecks the standings, and saying so is more useful than a
+   * neutral description.
+   */
+  function balanceNote(t) {
+    const mode = t.balanceMode || "off";
+    if (mode === "off") {
+      return `<p class="adv-note">Matchups ignore ability. Everyone's draw is down to chance.</p>`;
+    }
+    const st = strengthFor(t);
+    const source = !st
+      ? `<p class="adv-warn">${icon("warn")} Nothing to go on yet — set levels below, or record a few results first.</p>`
+      : `<p class="adv-note adv-src">${icon("check")} Using ${st.source === "levels" ? "the levels you set" : "results so far"}.</p>`;
+    const body = mode === "fair"
+      ? `Evens out <b>who you get as a partner</b>, so nobody is repeatedly carried or repeatedly sunk. Standings end up reflecting how people actually played.`
+      : `Puts stronger players with weaker ones so <b>games stay close</b>. Fun to play — but the strongest player always draws a weak partner, so the standings stop meaning much.`;
+    const levels = t.levels || {};
+    const setCount = nonEmpty(t.players).filter((p) => levels[p.trim()]).length;
+    return `
+      <p class="adv-note">${body}</p>
+      ${source}
+      <button class="link-btn" data-act="editLevels">${icon("people")} ${setCount ? `Player levels (${setCount} set)` : "Set player levels"}</button>`;
+  }
+
   // ------------------------------------------------------- advanced (beta)
   function advancedCard(t) {
     const mix = t.mix || "balanced";
@@ -514,6 +576,13 @@
       <div class="adv-label">Keep apart</div>
       <div class="pair-list">${avoid.length ? pairRow(avoid, "avoid") : `<span class="adv-empty">No one kept apart</span>`}</div>
       <button class="link-btn" data-act="addPair" data-kind="avoid">${icon("plus")} Add pair to separate</button>
+
+      <div class="adv-label">Balance by skill</div>
+      <div class="segmented adv-seg">
+        ${[["off", "Off"], ["fair", "Fair draw"], ["close", "Close games"]].map(([k, l]) => `
+          <button class="${(t.balanceMode || "off") === k ? "active" : ""}" data-act="setBalance" data-k="${k}">${l}</button>`).join("")}
+      </div>
+      ${balanceNote(t)}
 
       <div class="adv-label">Who's here when</div>
       <div class="pair-list">${
@@ -610,7 +679,8 @@
    * without ever showing it; this states it in the schedule's own terms.
    */
   function fairnessCard(t) {
-    const a = E.analyzeSchedule(t.players, t.schedule, t.restingByRound, t.availability);
+    const st = strengthFor(t);
+    const a = E.analyzeSchedule(t.players, t.schedule, t.restingByRound, t.availability, st && st.map);
     const open = state.fairnessOpen;
     const headline = a.perfectRotation
       ? "Everyone partners everyone, exactly once"
@@ -632,6 +702,17 @@
         ? `Nobody sits out.`
         : (a.restSpread === 0 ? `Everyone sits out ${a.restMax}×.` : `Sit-outs differ by at most ${a.restSpread}.`),
     ];
+
+    // Only meaningful once we know something about ability.
+    if (a.partnerLuckSpread != null) {
+      const luck = a.partnerLuckSpread;
+      facts.push(luck < 0.6
+        ? `Partner draw is even — no one is repeatedly carried or sunk.`
+        : `Partner draw is uneven: ${luck.toFixed(1)} levels between the luckiest and unluckiest.`);
+      if (t.balanceMode === "close") {
+        facts.push(`Teams are matched for close games, so the standings will reflect skill less.`);
+      }
+    }
 
     return `
     <div class="fair-card ${a.perfectRotation ? "perfect" : ""}">
@@ -854,6 +935,31 @@
       </div>
       <div class="sheet-actions">
         <button class="btn btn-ghost" data-act="closeSheet">Cancel</button>
+      </div>`);
+  }
+
+  /** Optional 1-5 rating per player; tapping the current level clears it. */
+  function levelsSheet() {
+    const t = state.t;
+    const names = nonEmpty(t.players).map((p) => p.trim());
+    const levels = t.levels || {};
+    openSheet(`
+      <div class="grabber"></div>
+      <h3>Player levels</h3>
+      <p>Optional. 1 is a beginner, 5 is the strongest. Leave anyone blank and they count as average.</p>
+      <div class="pick-list">
+        ${names.map((n) => `
+          <div class="level-row">
+            <span class="level-name">${esc(n)}</span>
+            <span class="level-dots">
+              ${[1, 2, 3, 4, 5].map((v) => `
+                <button class="level-dot ${levels[n] >= v ? "on" : ""}" data-act="setLevel"
+                  data-name="${esc(n)}" data-v="${v}" aria-label="${esc(n)} level ${v}"></button>`).join("")}
+            </span>
+          </div>`).join("")}
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-primary" data-act="closeSheet">Done</button>
       </div>`);
   }
 
@@ -1194,6 +1300,18 @@
         const exists = list.some((p) => p.includes(chosen[0]) && p.includes(chosen[1]));
         if (!exists) list.push([chosen[0], chosen[1]]);
         closeSheet(); saveCurrent(); render(); break;
+      }
+      case "setBalance":
+        t.balanceMode = node.dataset.k === "off" ? null : node.dataset.k;
+        saveCurrent(); render(); break;
+      case "editLevels": levelsSheet(); break;
+      case "setLevel": {
+        const name = node.dataset.name;
+        const v = Number(node.dataset.v);
+        t.levels = t.levels || {};
+        if (t.levels[name] === v) delete t.levels[name];   // tap again to clear
+        else t.levels[name] = v;
+        saveCurrent(); render(); levelsSheet(); break;
       }
       case "editAvailability": availabilitySheet(); break;
       case "editPlayerAvail": playerAvailSheet(node.dataset.name); break;
