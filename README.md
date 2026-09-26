@@ -30,7 +30,8 @@ PB Gen does that scheduling for you.
 ## Features
 
 - **Balanced pairing engine** — minimises repeat partnerships and repeat opponents.
-- **Fair rest rotation** — with odd numbers, sit-outs are distributed evenly.
+- **Fair rest rotation** — sit-outs are distributed evenly, whatever the group size.
+- **Up to 5 courts** — set what the venue has; the schedule fills as many as the group can.
 - **Live scoring** — record match scores; the leaderboard updates instantly.
 - **Point-differential ranking** — sort by points, wins, losses, or rests.
 - **Add rounds mid-tournament** — extend a session without losing history.
@@ -85,20 +86,24 @@ CI runs this suite on every push and blocks deployment if it fails.
 
 ## How the scheduler works
 
-Each round, the engine scores every player by how "owed" they are a game:
+Americano has two rules the engine never trades away: **everyone plays the same number
+of games** and **everyone sits out the same number of times** (each within one). Within
+those rules it chases variety — everyone partnering everyone, and opponents spread out.
 
-```
-deficit = 0.4 · (1 − games played ÷ rounds)
-        + 0.4 · (1 − unique partners ÷ possible partners)
-        + 0.2 · (rounds since last played)
-```
+Each round:
 
-Players with the highest deficit are prioritised onto courts. When more players are
-present than seats, sit-outs are chosen by who rested least recently, so rests stay
-even. Teams are then formed by **backtracking search**, rejecting any pairing that has
-already happened. Once every unique partnership has been used, the engine switches to a
-repeat-tolerant mode that still avoids back-to-back repeats and favours the
-least-used pairings.
+1. **Courts.** Set how many courts the venue has (1–5). Only full courts of four are
+   used, so 15 players on 5 courts play on 3, with 3 sitting out; if late arrivals push
+   the group to 16, a fourth court opens automatically.
+2. **Who sits out.** Fewest sit-outs so far sits first, then whoever sat longest ago.
+   When several players are genuinely tied, the engine tries several sit-out groups and
+   keeps the one whose players can form the freshest partnerships.
+3. **Who plays whom.** Partners are matched, then teams are paired onto courts, scoring
+   whole rounds on squared repeat costs — a repeated partnership costs far more than a
+   repeated opponent. The best of several attempts is kept.
+
+For 5, 8, 9, 12, 13, 16, 17, 20 and 21 players on full courts, the engine uses a known
+*whist* schedule in which every pair partners exactly once and opposes exactly twice.
 
 Scoring is Americano-standard: the winning pair each take a win plus the **score margin**
 added to their point differential, and the losing pair take a loss with that margin

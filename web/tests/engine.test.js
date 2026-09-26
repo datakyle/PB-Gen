@@ -229,6 +229,35 @@ group("Determinism end-to-end", () => {
 });
 
 // ---------------------------------------------------------------------------
+group("Courts are what the venue has; only full courts are used", () => {
+  const perRound = (r) => {
+    const c = {};
+    for (const m of r.schedule) c[m.round] = (c[m.round] || 0) + 1;
+    return c;
+  };
+  // 15 players, 5 courts available: 3 full courts, 3 sit, rules intact.
+  for (const seed of [1n, 7n, 99n]) {
+    const P = names(15);
+    const r = new E.AmericanoScheduler(P, 18, 5, seed).generateSchedule();
+    const c = perRound(r);
+    assert(Object.values(c).every((n) => n === 3), "15 players on 5 courts use exactly 3 each round");
+    assert(Object.values(r.restingByRound).every((a) => a.length === 3), "3 sit out each round");
+    const a = E.analyzeSchedule(P, r.schedule, r.restingByRound);
+    assert(a.gamesSpread <= 1, "games within 1 with spare courts");
+    assert(a.restSpread <= 1, "sit-outs within 1 with spare courts");
+    assert(a.partnered >= 100, "near-complete partner rotation (" + a.partnered + "/105)");
+  }
+  // Late arrivals fill a spare court as soon as they turn up.
+  const P = names(17);
+  const r = new E.AmericanoScheduler(P, 10, 5, 123n, {
+    availability: { [P[15]]: { from: 4 }, [P[16]]: { from: 4 } },
+  }).generateSchedule();
+  const c = perRound(r);
+  assert(c[0] === 3 && c[3] === 3, "15 present => 3 courts");
+  assert(c[4] === 4 && c[9] === 4, "17 present => a 4th court opens");
+});
+
+// ---------------------------------------------------------------------------
 console.log("\n" + "=".repeat(50));
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) {

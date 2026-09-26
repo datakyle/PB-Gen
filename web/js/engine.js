@@ -259,6 +259,7 @@
   const RESTARTS = 8;
   const W_BALANCE = 45;    // strength-fairness weight, subordinate to repeats
   const AVOID_COST = 1e7;   // effectively a ban, without making rounds impossible
+  const SIT_SAMPLES = 10;   // sit-out sets tried when several players are equally due a rest
 
 
   class AmericanoScheduler {
@@ -527,15 +528,43 @@
       return best;
     }
 
-    /** Choose who sits out: level the totals first, then who waited longest. */
-    _chooseResters(candidates, count, round) {
-      if (count <= 0) return [];
-      const ordered = shuffleWith(candidates, () => this._rand()).sort((a, b) => {
-        if (this.restCount[a] !== this.restCount[b]) return this.restCount[a] - this.restCount[b];
-        if (this.lastRestRound[a] !== this.lastRestRound[b]) return this.lastRestRound[a] - this.lastRestRound[b];
-        return this.gamesPlayed[b] - this.gamesPlayed[a];
-      });
-      return ordered.slice(0, count);
+    /**
+     * Choose who sits out and seat everyone else.
+     *
+     * Rest fairness always decides first: fewest sit-outs sits first, then
+     * whoever sat longest ago, then whoever has played most. Only players who
+     * are identical on all three are a genuinely free choice — and with
+     * several courts and several sitters there are many of those. Instead of
+     * picking among them at random, try a few candidate sit-out sets and keep
+     * the one whose playing group can form the freshest round.
+     */
+    _seatRound(here, sitCount) {
+      if (sitCount <= 0) return { resting: [], pairs: this._optimiseRound(here) };
+      const cmp = (a, b) =>
+        this.restCount[a] - this.restCount[b] ||
+        this.lastRestRound[a] - this.lastRestRound[b] ||
+        this.gamesPlayed[b] - this.gamesPlayed[a];
+      const sorted = here.slice().sort(cmp);
+      const edge = sorted[sitCount - 1];
+      const mustSit = here.filter((p) => cmp(p, edge) < 0);
+      const tie = here.filter((p) => cmp(p, edge) === 0);
+      const need = sitCount - mustSit.length;
+      const samples = tie.length > need ? SIT_SAMPLES : 1;
+
+      let best = null;
+      for (let k = 0; k < samples; k++) {
+        const resting = mustSit.concat(shuffleWith(tie, () => this._rand()).slice(0, need));
+        const out = new Set(resting);
+        const pairs = this._optimiseRound(here.filter((p) => !out.has(p)));
+        let cost = 0;
+        for (const m of pairs) {
+          cost += this._partnerCost(m.team1[0], m.team1[1]) + this._partnerCost(m.team2[0], m.team2[1]);
+          cost += this._opponentCost(m.team1, m.team2);
+        }
+        if (!best || cost < best.cost) best = { resting, pairs, cost };
+        if (cost === 0) break; // cannot do better than a round with no repeats
+      }
+      return best;
     }
 
     _commit(split, round, court) {
@@ -623,16 +652,11 @@
         return { matches: [], resting: here.slice(), away: this._awayAt(round) };
       }
 
-      const playing = courts * 4;
-      const resting = this._chooseResters(here, here.length - playing, round);
-      const restingSet = new Set(resting);
+      const { resting, pairs: courtsForRound } = this._seatRound(here, here.length - courts * 4);
       for (const p of resting) {
         this.restCount[p] += 1;
         this.lastRestRound[p] = round;
       }
-      const pool = here.filter((p) => !restingSet.has(p));
-
-      const courtsForRound = this._optimiseRound(pool);
       const matches = [];
       const partnersThisRound = new Set();
       courtsForRound.forEach((split, i) => {

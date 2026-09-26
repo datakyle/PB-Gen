@@ -123,8 +123,8 @@
   function canGenerate(t) {
     return nonEmpty(t.players).length >= LIMITS.minPlayers && duplicates(t.players).size === 0;
   }
-  // A court needs 4 players, so offering more courts than the group can fill
-  // would be a control that does nothing.
+  // A court needs 4 players. This is how many the group can fill — the
+  // default, and the most the schedule will ever use at once.
   function maxCourtsFor(playerCount) {
     return Math.max(1, Math.min(LIMITS.maxCourts, Math.floor(playerCount / 4)));
   }
@@ -166,9 +166,9 @@
   function plan(t) {
     const n = nonEmpty(t.players).length;
     if (n < LIMITS.minPlayers) return null;
-    const seats = t.numberOfCourts * 4;
-    const playing = Math.min(n, seats - (seats % 4));
-    const courtsUsed = Math.floor(playing / 4);
+    // Only whole courts of four play; spare courts stay empty.
+    const courtsUsed = Math.min(t.numberOfCourts, Math.floor(n / 4));
+    const playing = courtsUsed * 4;
     const sittingOut = n - playing;
     const r = t.numberOfRounds;
 
@@ -181,6 +181,13 @@
     else if (rem === 0) games = `Everyone plays ${base} ${base === 1 ? "game" : "games"} and sits out ${r - base}.`;
     else games = `Everyone plays ${base}–${base + 1} games, taking turns sitting out.`;
 
+    // Courts are what the venue has; the group may not fill them all.
+    let spare = "";
+    if (t.numberOfCourts > courtsUsed) {
+      const nextNeed = (courtsUsed + 1) * 4;
+      spare = ` ${n} players fill ${courtsUsed} of your ${t.numberOfCourts} courts — ${nextNeed} would fill ${courtsUsed + 1}.`;
+    }
+
     const mins = r * MINUTES_PER_ROUND;
     const time = mins >= 60
       ? `${Math.floor(mins / 60)} hr${mins % 60 ? " " + (mins % 60) + " min" : ""}`
@@ -188,7 +195,7 @@
 
     return {
       head: `${r} ${r === 1 ? "round" : "rounds"} · ${n} players · ${courtsUsed} ${courtsUsed === 1 ? "court" : "courts"}`,
-      body: `${games} About ${time}.`,
+      body: `${games}${spare} About ${time}.`,
     };
   }
 
@@ -471,7 +478,6 @@
     const count = nonEmpty(t.players).length;
     const ready = canGenerate(t);
     const editing = t.schedule.length > 0;
-    const maxCourts = maxCourtsFor(count);
     const p = plan(t);
 
     return `
@@ -496,7 +502,7 @@
 
         <div class="card">
           ${settingRow("Rounds", "rounds", t.numberOfRounds, LIMITS.minRounds, LIMITS.maxRounds)}
-          <div id="courts-slot">${courtsRow(t, maxCourts)}</div>
+          <div id="courts-slot">${courtsRow(t)}</div>
           ${settingRow("Games to", "target", t.pointsTarget, LIMITS.minTarget, LIMITS.maxTarget)}
           <div class="setting-row">
             <span class="label">Win by 2</span>
@@ -562,11 +568,10 @@
     return (t.schedule || []).filter((m) => m.winningTeam).length;
   }
 
-  // Courts only make sense once there are enough players for a second court.
-  function courtsRow(t, maxCourts) {
-    return maxCourts > 1
-      ? settingRow("Courts", "courts", t.numberOfCourts, LIMITS.minCourts, maxCourts)
-      : "";
+  // Courts are set by what the venue has (up to 5). The schedule only ever
+  // uses as many as the group can fill; the plan below says which.
+  function courtsRow(t) {
+    return settingRow("Courts", "courts", t.numberOfCourts, LIMITS.minCourts, LIMITS.maxCourts);
   }
 
   function planBox(t) {
@@ -577,7 +582,12 @@
     let rotation = "";
     if (need != null) {
       if (t.numberOfRounds >= need) {
-        rotation = `<div class="plan-rot done">${icon("check")} Everyone partners everyone.</div>`;
+        // Guaranteed only where a perfect table exists and every court is
+        // full; otherwise there is room for it and the search gets close.
+        const sure = E.hasPerfectTable(count) && t.numberOfCourts >= Math.floor(count / 4);
+        rotation = `<div class="plan-rot done">${icon("check")} ${sure
+          ? "Everyone partners everyone."
+          : "Enough rounds for everyone to partner everyone."}</div>`;
       } else {
         rotation = `<button class="plan-rot" data-act="setRounds" data-n="${need}">
             ${icon("info")} <span><b>${need} rounds</b> for everyone to partner everyone — tap to set</span>
@@ -690,7 +700,7 @@
     <div class="player-row">
       <span class="idx">${i + 1}</span>
       <input class="field player-input ${isDupe ? "dupe" : ""}" data-i="${i}" type="text" autocomplete="off"
-        placeholder="Player ${i + 1}" value="${esc(name)}" maxlength="24" />
+        placeholder="Player ${i + 1}" value="${esc(name)}" maxlength="24" enterkeyhint="next" />
       ${canRemove ? `<button class="icon-btn danger" data-act="removePlayer" data-i="${i}" aria-label="Remove player ${i + 1}">${icon("minus")}</button>` : ""}
     </div>`;
   }
@@ -1142,6 +1152,16 @@
         refreshSetupLive();
       });
       inp.addEventListener("blur", saveCurrent);
+      // Return moves to the next name, adding a row at the end — a whole group
+      // can be typed in without reaching for the screen.
+      inp.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" || e.isComposing) return;
+        e.preventDefault();
+        const i = Number(inp.dataset.i);
+        const next = appEl.querySelector(`.player-input[data-i="${i + 1}"]`);
+        if (next) next.focus();
+        else if (inp.value.trim()) onAction({ currentTarget: { dataset: { act: "addPlayer" } } });
+      });
     });
 
     wireWheels();
@@ -1229,19 +1249,13 @@
     const warn = document.getElementById("dupe-warn");
     if (warn) warn.innerHTML = dupes.size ? dupeWarn() : "";
 
-    // Courts can't exceed what the group can fill; the control appears and
-    // disappears as the player count crosses a multiple of four. Until someone
-    // sets it deliberately, use every court the group can fill — otherwise
-    // people sit out for no reason.
-    const maxCourts = maxCourtsFor(count);
-    if (t.courtsTouched) {
-      if (t.numberOfCourts > maxCourts) t.numberOfCourts = maxCourts;
-    } else {
-      t.numberOfCourts = maxCourts;
-    }
+    // Until someone sets courts deliberately, use every court the group can
+    // fill — otherwise people sit out for no reason. Once set, it is the
+    // venue's number and stays put as players come and go.
+    if (!t.courtsTouched) t.numberOfCourts = maxCourtsFor(count);
     const slot = document.getElementById("courts-slot");
     if (slot) {
-      const want = courtsRow(t, maxCourts);
+      const want = courtsRow(t);
       if (slot.innerHTML.trim() !== want.trim()) {
         slot.innerHTML = want;
         slot.querySelectorAll("[data-act]").forEach((n) => n.addEventListener("click", onAction));
@@ -1335,16 +1349,19 @@
       case "addPlayer":
         t.players.push("");
         saveCurrent(); render();
-        setTimeout(() => {
+        {
+          // Focus in the same turn as the tap/Return: iOS only keeps the
+          // keyboard up when focus moves synchronously, and nothing typed
+          // in between is lost.
           const inputs = appEl.querySelectorAll(".player-input");
           const last = inputs[inputs.length - 1];
           if (last) last.focus();
-        }, 0);
+        }
         break;
       case "removePlayer": {
         t.players.splice(Number(node.dataset.i), 1);
         while (t.players.length < LIMITS.minPlayers) t.players.push("");
-        t.numberOfCourts = Math.min(t.numberOfCourts, maxCourtsFor(nonEmpty(t.players).length));
+        if (!t.courtsTouched) t.numberOfCourts = maxCourtsFor(nonEmpty(t.players).length);
         saveCurrent(); render(); break;
       }
       case "stepUp":
@@ -1356,7 +1373,7 @@
           t.pointsTarget = clamp(t.pointsTarget + delta, LIMITS.minTarget, LIMITS.maxTarget);
         } else {
           t.courtsTouched = true;
-          t.numberOfCourts = clamp(t.numberOfCourts + delta, LIMITS.minCourts, maxCourtsFor(nonEmpty(t.players).length));
+          t.numberOfCourts = clamp(t.numberOfCourts + delta, LIMITS.minCourts, LIMITS.maxCourts);
         }
         saveCurrent(); render(); break;
       }

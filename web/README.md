@@ -16,7 +16,7 @@ Netlify, any web host).
 - **Create** named tournaments (Americano format; single/double elimination are
   stubbed as "coming soon", matching the iOS app).
 - **Details** — add/edit/remove players (min 4), with duplicate-name detection;
-  set rounds (1–10) and courts (1–5).
+  set rounds (1–30) and courts available (1–5).
 - **Schedule** — expandable per-round cards showing each court's matchup, who's
   resting, and a tap-to-set score picker; add extra rounds on the fly.
 - **Leaderboard** — ranked standings with point differential, wins, losses, and
