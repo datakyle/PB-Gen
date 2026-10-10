@@ -419,7 +419,7 @@
       </div>
 
       <div class="start-brand">
-        <span class="brand-glyph">${icon("pball")}</span>
+        <img class="brand-glyph" src="icon.svg" alt="" width="62" height="62">
         <button class="wordmark-lg" data-act="betaTap" aria-label="PB Gen">PB GEN</button>
         ${Store.isBeta() ? `<span class="beta-flag">Beta features on</span>` : ""}
         <div class="hero-tagline">Everyone rotates partners.<br>Best individual record wins.</div>

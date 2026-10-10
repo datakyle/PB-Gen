@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/icon.svg" alt="PB Gen" width="88" height="88">
+<img src="logo.svg" alt="PB Gen logo" width="132" height="132">
 
 # PB Gen
 
